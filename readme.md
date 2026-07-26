@@ -10,8 +10,6 @@ Construído com **Electron**, **HTML**, **CSS** e **JavaScript puro** — sem fr
 
 ---
 
-src/imagens/Configurações.png
-
 ## Funcionalidades
 
 - **Gerenciamento de projetos** — crie, abra, edite e exclua projetos de eBook, cada um salvo em sua própria pasta local.
