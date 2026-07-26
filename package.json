@@ -1,0 +1,41 @@
+{
+  "name": "editor-de-epubs",
+  "version": "0.0.1",
+  "description": "Um editor minimalista para transformar algumas novels em epub",
+  "license": "MIT",
+  "author": "elyahumendes",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder",
+    "pack": "electron-builder --dir",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "devDependencies": {
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3"
+  },
+  "dependencies": {
+    "archiver": "^8.0.0"
+  },
+  "build": {
+    "appId": "com.elyahu.editordeepub",
+    "productName": "Editor de EPUB",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "**/*",
+      "!dist/**"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "src/icons/logo_do_app.ico"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "src/icons/logo_do_app.png"
+    }
+  }
+}
