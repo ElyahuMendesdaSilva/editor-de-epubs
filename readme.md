@@ -57,5 +57,5 @@ A lista de mudanças de cada versão pode ser encontrada na seção **Releases**
 Desenvolvido por [elyahumendes](https://github.com/ElyahuMendesdaSilva)
 
 ## Licença
-
-Este projeto está sob a PolyForm Noncommercial License 1.0.0 — uso, estudo e modificação são livres para fins não comerciais. É proibido usar este código, no todo ou em parte, para fins comerciais (venda, assinaturas, SaaS, ou qualquer forma de monetização), por pessoas físicas ou empresas, sem autorização prévia do autor. Veja o arquivo LICENSE para o texto completo.
+Este projeto está sob a licença **GNU General Public License v3.0 (GPL-3.0)**. 
+Você é livre para usar, estudar, modificar e redistribuir este software. Qualquer versão modificada ou trabalho derivado que você distribuir também deve ser mantido sob a licença GPL-3.0 (copyleft). Veja o arquivo [LICENSE](./LICENSE) para mais detalhes.
