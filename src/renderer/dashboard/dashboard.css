@@ -223,6 +223,7 @@ body {
 }
 
 .cover-dropzone {
+    position: relative;
     display: flex;
     width: 180px;
     aspect-ratio: 2 / 3;
@@ -235,6 +236,24 @@ body {
     justify-content: center;
     cursor: pointer;
     transition: all 0.2s ease;
+    overflow: hidden;
+}
+
+.cover-preview-img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.cover-dropzone.has-image .cover-placeholder {
+    display: none;
+}
+
+.cover-dropzone.drag-over {
+    outline: 2px dashed var(--accent);
+    outline-offset: -4px;
 }
 
 .cover-dropzone:hover {

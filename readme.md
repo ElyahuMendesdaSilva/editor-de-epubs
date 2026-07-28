@@ -4,6 +4,8 @@ Um aplicativo de desktop minimalista para escrever e exportar eBooks em **ePub**
 
 Construído com **Electron**, **HTML**, **CSS** e **JavaScript puro** — sem frameworks de front-end.
 
+A organização de código está documentada em [ARCHITECTURE.md](ARCHITECTURE.md). A camada Electron fica em `src/main` e cada tela fica em `src/renderer`.
+
 ![](src/imagens/Dashboard.png)
 ![](src/imagens/NovoProjeto.png)
 ![](src/imagens/Configurações.png)

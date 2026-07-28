@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     atualizarProjeto: (dados) => {
         return ipcRenderer.invoke('atualizar-projeto', dados);
     },
+    excluirProjeto: (projectPath) => ipcRenderer.invoke('excluir-projeto', projectPath),
     selecionarImagens: () => ipcRenderer.invoke('selecionar-imagens'),
     copiarImagens: (dados) => ipcRenderer.invoke('copiar-imagens', dados),
     excluirImagem: (dados) => ipcRenderer.invoke('excluir-imagem', dados),

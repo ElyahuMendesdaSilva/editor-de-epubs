@@ -381,7 +381,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function openProject(projectPath) {
-        window.location.href = 'src/editor/editor.html?project=' + encodeURIComponent(projectPath);
+        window.location.href = 'src/renderer/editor/editor.html?project=' + encodeURIComponent(projectPath);
     }
 
     async function loadOngoingProjects() {
@@ -530,7 +530,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (result.success) {
             // Leva direto para o editor, já apontando para a pasta do projeto criado
-            window.location.href = 'src/editor/editor.html?project=' + encodeURIComponent(result.path);
+            window.location.href = 'src/renderer/editor/editor.html?project=' + encodeURIComponent(result.path);
         } else {
             console.error('Erro:', result.error);
             alert('Não foi possível criar o projeto: ' + result.error);
