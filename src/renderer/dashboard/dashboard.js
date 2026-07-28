@@ -469,14 +469,32 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            const result = await window.electronAPI.excluirProjeto(editingProjectPath);
+            if (!window.electronAPI || typeof window.electronAPI.excluirProjeto !== 'function') {
+                alert('A função de exclusão não está disponível. Reinicie o aplicativo e tente novamente.');
+                return;
+            }
 
-            if (result.success) {
-                closeModal();
-                await loadOngoingProjects();
-            } else {
-                console.error('Erro:', result.error);
-                alert('Não foi possível excluir o projeto: ' + result.error);
+            btnDeleteProject.disabled = true;
+
+            try {
+                const result = await window.electronAPI.excluirProjeto(editingProjectPath);
+
+                if (result && result.success) {
+                    closeModal();
+                    await loadOngoingProjects();
+                    return;
+                }
+
+                const errorMessage = result && result.error
+                    ? result.error
+                    : 'Resposta inválida ao excluir o projeto.';
+                console.error('Erro:', errorMessage);
+                alert('Não foi possível excluir o projeto: ' + errorMessage);
+            } catch (error) {
+                console.error('Erro ao excluir projeto:', error);
+                alert('Não foi possível excluir o projeto: ' + error.message);
+            } finally {
+                btnDeleteProject.disabled = false;
             }
         });
     }
