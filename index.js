@@ -240,10 +240,36 @@ const IMAGE_MIME_BY_EXT = {
     '.svg': 'image/svg+xml'
 };
 
+// Formatos aceitos ao IMPORTAR uma nova imagem (capa ou imagem de
+// capítulo), seja por diálogo de seleção ou por arrastar-e-soltar.
+// Não afeta imagens .gif/.webp/.svg já existentes em projetos antigos
+// (IMAGE_MIME_BY_EXT acima continua reconhecendo essas extensões na
+// hora de gerar o epub/pdf) — só bloqueia a entrada de arquivos novos.
+const ALLOWED_IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg'];
+
+function isAllowedImageExtension(filePath) {
+    return ALLOWED_IMAGE_EXTENSIONS.includes(path.extname(filePath).toLowerCase());
+}
+
 function escapeXml(value) {
     return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;'
     }[ch]));
+}
+
+// Converte um caminho absoluto do disco (Windows ou Unix) numa URL
+// file:// válida. Usado para montar o HTML temporário da exportação
+// em PDF, com um <base> apontando pra pasta de capítulos do projeto
+// — assim os caminhos relativos de imagem ("../images/x.jpg") que já
+// estão salvos nos .xhtml continuam funcionando sem precisar reescrever.
+function toFileUrl(absolutePath) {
+    let normalized = absolutePath.replace(/\\/g, '/');
+
+    if (!normalized.startsWith('/')) {
+        normalized = '/' + normalized;
+    }
+
+    return 'file://' + encodeURI(normalized);
 }
 
 // Monta o .epub inteiro (estrutura OEBPS + manifesto + spine + sumário)
@@ -459,6 +485,149 @@ async function buildEpub(projectPath, projectData) {
     return zip.finalize();
 }
 
+// Monta um único documento HTML com todos os capítulos (na ordem certa,
+// separados por quebra de página), a folha de estilo do projeto e uma
+// página de rosto simples com título/autor. É esse HTML que a janela
+// oculta do Electron carrega para gerar o PDF em buildPdf().
+async function buildPdfHtml(projectPath, projectData) {
+    const chaptersDir = path.join(projectPath, 'chapters');
+    const chaptersManifest = readJSONSafe(path.join(chaptersDir, 'manifest.json'), [])
+        .sort((a, b) => a.order - b.order);
+
+    const chapterSections = [];
+
+    for (const entry of chaptersManifest) {
+        const filePath = path.join(chaptersDir, entry.file);
+        let xhtml = fsSync.existsSync(filePath) ? await fs.readFile(filePath, 'utf-8') : '';
+
+        if (!xhtml) {
+            continue;
+        }
+
+        const match = xhtml.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+        const bodyHtml = match ? match[1].trim() : xhtml;
+
+        chapterSections.push(
+            `<section class="pdf-chapter">` +
+            `<h1 class="pdf-chapter-title">${escapeXml(entry.title || 'Capítulo')}</h1>` +
+            bodyHtml +
+            `</section>`
+        );
+    }
+
+    if (chapterSections.length === 0) {
+        chapterSections.push('<section class="pdf-chapter"></section>');
+    }
+
+    // ---------- Folhas de estilo do projeto ----------
+    const stylesDir = path.join(projectPath, 'styles');
+    let projectCss = '';
+
+    if (fsSync.existsSync(stylesDir)) {
+        const fileNames = await fs.readdir(stylesDir);
+
+        for (const fileName of fileNames) {
+            if (!fileName.endsWith('.css')) {
+                continue;
+            }
+
+            projectCss += (await fs.readFile(path.join(stylesDir, fileName), 'utf-8')) + '\n';
+        }
+    }
+
+    const chaptersDirUrl = toFileUrl(chaptersDir) + '/';
+    const title = projectData.title || 'Sem título';
+    const author = projectData.author || '';
+    const language = projectData.language || 'pt-BR';
+
+    // Página de rosto: mostra a imagem de capa do projeto, se houver
+    // uma; caso contrário, mostra título/autor em texto simples.
+    let coverSection = `<section class="pdf-cover"><h1>${escapeXml(title)}</h1>${author ? `<p>${escapeXml(author)}</p>` : ''}</section>`;
+
+    if (projectData.cover) {
+        const coverPath = path.join(projectPath, projectData.cover);
+
+        if (fsSync.existsSync(coverPath)) {
+            const coverUrl = toFileUrl(coverPath);
+            coverSection = `<section class="pdf-cover pdf-cover-image"><img src="${coverUrl}" alt=""/></section>`;
+        }
+    }
+
+    return `<!DOCTYPE html>
+<html lang="${escapeXml(language)}">
+<head>
+<meta charset="utf-8"/>
+<base href="${chaptersDirUrl}"/>
+<title>${escapeXml(title)}</title>
+<style>
+${projectCss}
+
+/* ---- Ajustes específicos da exportação em PDF ---- */
+.pdf-cover {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 90vh;
+    text-align: center;
+    page-break-after: always;
+}
+.pdf-cover h1 { font-size: 28px; margin-bottom: 12px; }
+.pdf-cover p { font-size: 16px; color: #555; }
+.pdf-cover-image { height: 100vh; }
+.pdf-cover-image img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.pdf-chapter { page-break-before: always; }
+.pdf-chapter:first-of-type { page-break-before: avoid; }
+.pdf-chapter-title { margin-bottom: 1em; }
+hr.page-break { border: 0; height: 0; margin: 0; page-break-after: always; }
+</style>
+</head>
+<body>
+${coverSection}
+${chapterSections.join('\n')}
+</body>
+</html>`;
+}
+
+// Gera o PDF do projeto usando o recurso nativo de impressão do
+// Chromium (webContents.printToPDF), sem depender de nenhuma
+// biblioteca externa: carrega o HTML montado em buildPdfHtml() numa
+// janela oculta e captura o resultado como PDF.
+async function buildPdf(projectPath, projectData) {
+    const html = await buildPdfHtml(projectPath, projectData);
+
+    const tmpFile = path.join(
+        app.getPath('temp'),
+        `ebook-export-${Date.now()}-${Math.random().toString(36).slice(2)}.html`
+    );
+
+    await fs.writeFile(tmpFile, html, 'utf-8');
+
+    const printWindow = new BrowserWindow({
+        show: false,
+        webPreferences: {
+            sandbox: true
+        }
+    });
+
+    try {
+        await printWindow.loadFile(tmpFile);
+
+        const pdfBuffer = await printWindow.webContents.printToPDF({
+            printBackground: true,
+            pageSize: 'A4',
+            margins: { marginType: 'default' }
+        });
+
+        return pdfBuffer;
+
+    } finally {
+        printWindow.destroy();
+
+        fs.unlink(tmpFile).catch(() => {});
+    }
+}
+
 // Onde fica a lista de projetos conhecidos pelo app (fora da pasta de qualquer
 // projeto específico, porque o dashboard precisa saber deles antes de abrir um)
 function getRegistryPath() {
@@ -479,6 +648,8 @@ function createWindow() {
     const win = new BrowserWindow({
         width: 1200,
         height: 800,
+        minWidth:1200 ,
+        minHeight:800,
         autoHideMenuBar:true,
         icon: path.join(__dirname, "src/icons/logo_do_app.png"),
         webPreferences: {
@@ -487,7 +658,7 @@ function createWindow() {
             nodeIntegration: false
         }
     });
-
+    win.removeMenu();
     win.loadFile('index.html');
 }
 
@@ -546,10 +717,12 @@ ipcMain.handle('criar-projeto', async (event, dados) => {
             )
         );
 
-        // Copia a capa selecionada, preservando a extensão original do arquivo
+        // Copia a capa selecionada, preservando a extensão original do arquivo.
+        // Só png/jpg/jpeg são aceitos; qualquer outro formato é ignorado
+        // (o projeto é criado sem capa nesse caso).
         let coverFileName = null;
-        if (coverPath && fsSync.existsSync(coverPath)) {
-            const ext = path.extname(coverPath) || '.png';
+        if (coverPath && fsSync.existsSync(coverPath) && isAllowedImageExtension(coverPath)) {
+            const ext = path.extname(coverPath).toLowerCase();
             coverFileName = `capa${ext}`;
             await fs.copyFile(coverPath, path.join(projectDir, coverFileName));
         }
@@ -606,11 +779,11 @@ ipcMain.handle('atualizar-projeto', async (event, dados) => {
             throw new Error('project.json não encontrado nessa pasta.');
         }
 
-        // Só mexe na capa se uma nova imagem foi selecionada; caso
-        // contrário mantém a capa que já estava salva.
+        // Só mexe na capa se uma nova imagem válida (png/jpg/jpeg) foi
+        // selecionada; caso contrário mantém a capa que já estava salva.
         let coverFileName = projectData.cover || null;
 
-        if (coverPath && fsSync.existsSync(coverPath)) {
+        if (coverPath && fsSync.existsSync(coverPath) && isAllowedImageExtension(coverPath)) {
 
             // Remove a capa antiga, caso exista e tenha extensão diferente.
             if (coverFileName) {
@@ -620,7 +793,7 @@ ipcMain.handle('atualizar-projeto', async (event, dados) => {
                 }
             }
 
-            const ext = path.extname(coverPath) || '.png';
+            const ext = path.extname(coverPath).toLowerCase();
             coverFileName = `capa${ext}`;
             await fs.copyFile(coverPath, path.join(projectPath, coverFileName));
         }
@@ -748,7 +921,7 @@ ipcMain.handle('selecionar-imagens', async () => {
     const result = await dialog.showOpenDialog({
         properties: ['openFile', 'multiSelections'],
         filters: [
-            { name: 'Imagens', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'] }
+            { name: 'Imagens', extensions: ['png', 'jpg', 'jpeg'] }
         ]
     });
 
@@ -760,7 +933,9 @@ ipcMain.handle('selecionar-imagens', async () => {
 });
 
 
-// Copia as imagens selecionadas para a pasta images/ do projeto e atualiza o manifesto
+// Copia as imagens selecionadas para a pasta images/ do projeto e atualiza o manifesto.
+// Só aceita png/jpg/jpeg — qualquer outro formato é ignorado (e devolvido em
+// "skipped", para o renderer poder avisar o usuário quais arquivos não entraram).
 ipcMain.handle('copiar-imagens', async (event, { projectPath, imagePaths }) => {
     try {
         if (!projectPath) {
@@ -774,13 +949,19 @@ ipcMain.handle('copiar-imagens', async (event, { projectPath, imagePaths }) => {
         const manifest = readJSONSafe(manifestPath, []);
 
         const copiedImages = [];
+        const skipped = [];
 
         for (const originalPath of (imagePaths || [])) {
             if (!fsSync.existsSync(originalPath)) {
                 continue;
             }
 
-            const ext = path.extname(originalPath) || '.png';
+            if (!isAllowedImageExtension(originalPath)) {
+                skipped.push(path.basename(originalPath));
+                continue;
+            }
+
+            const ext = path.extname(originalPath).toLowerCase();
             const id = 'img-' + Date.now() + '-' + Math.floor(Math.random() * 10000);
             const fileName = `${id}${ext}`;
 
@@ -798,7 +979,7 @@ ipcMain.handle('copiar-imagens', async (event, { projectPath, imagePaths }) => {
 
         await writeJSON(manifestPath, manifest);
 
-        return { success: true, images: copiedImages };
+        return { success: true, images: copiedImages, skipped };
 
     } catch (error) {
         console.error('Erro ao copiar imagens:', error);
@@ -1096,11 +1277,62 @@ ipcMain.handle('salvar-css', async (event, { projectPath, target, content }) => 
 });
 
 
-// Abre o modal nativo de seleção de pasta e, se o usuário confirmar,
-// gera o .epub do projeto dentro dela.
-ipcMain.handle('exportar-projeto', async (event, projectPath) => {
+// Remove uma imagem da pasta images/ do projeto: apaga o arquivo em si,
+// o registro dela no manifesto (images/manifest.json) e o CSS dedicado
+// a ela (styles/<id>.css), se existir. Chamado a partir do botão de
+// excluir no painel lateral "Imagens" do editor, após confirmação do
+// usuário no modal.
+ipcMain.handle('excluir-imagem', async (event, { projectPath, imageId }) => {
     try {
-        console.log('[exportar-projeto] iniciado para:', projectPath);
+        if (!projectPath) {
+            throw new Error('Nenhum projeto aberto.');
+        }
+
+        if (!imageId) {
+            throw new Error('Nenhuma imagem informada.');
+        }
+
+        const imagesDir = path.join(projectPath, 'images');
+        const manifestPath = path.join(imagesDir, 'manifest.json');
+        const manifest = readJSONSafe(manifestPath, []);
+
+        const entry = manifest.find(item => item.id === imageId);
+
+        if (entry) {
+            const filePath = path.join(imagesDir, entry.file);
+            if (fsSync.existsSync(filePath)) {
+                await fs.unlink(filePath);
+            }
+        }
+
+        const updatedManifest = manifest.filter(item => item.id !== imageId);
+        await writeJSON(manifestPath, updatedManifest);
+
+        const cssPath = getCssFilePath(projectPath, imageId);
+        if (fsSync.existsSync(cssPath)) {
+            await fs.unlink(cssPath);
+        }
+
+        return { success: true };
+
+    } catch (error) {
+        console.error('Erro ao excluir imagem:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+
+// Abre o modal nativo de seleção de pasta e, se o usuário confirmar,
+// gera o eBook (.epub ou .pdf, conforme o formato escolhido no editor)
+// dentro dela. Aceita tanto a chamada antiga (string com o caminho do
+// projeto) quanto a nova ({ projectPath, format }), para não quebrar
+// nada que ainda chame esse canal do jeito anterior.
+ipcMain.handle('exportar-projeto', async (event, dados) => {
+    try {
+        const projectPath = typeof dados === 'string' ? dados : dados && dados.projectPath;
+        const format = dados && dados.format === 'pdf' ? 'pdf' : 'epub';
+
+        console.log('[exportar-projeto] iniciado para:', projectPath, '| formato:', format);
 
         if (!projectPath) {
             throw new Error('Nenhum projeto aberto.');
@@ -1124,18 +1356,21 @@ ipcMain.handle('exportar-projeto', async (event, projectPath) => {
         }
 
         const destDir = dialogResult.filePaths[0];
-        const fileName = sanitizeFolderName(projectData.title || 'ebook') + '.epub';
+        const extension = format === 'pdf' ? '.pdf' : '.epub';
+        const fileName = sanitizeFolderName(projectData.title || 'ebook') + extension;
         const destPath = path.join(destDir, fileName);
 
-        console.log('[exportar-projeto] gerando epub em:', destPath);
+        console.log(`[exportar-projeto] gerando ${format} em:`, destPath);
 
-        const epubBuffer = await buildEpub(projectPath, projectData);
+        const fileBuffer = format === 'pdf'
+            ? await buildPdf(projectPath, projectData)
+            : await buildEpub(projectPath, projectData);
 
-        await fs.writeFile(destPath, epubBuffer);
+        await fs.writeFile(destPath, fileBuffer);
 
-        console.log('[exportar-projeto] epub salvo com sucesso.');
+        console.log(`[exportar-projeto] ${format} salvo com sucesso.`);
 
-        return { success: true, path: destPath };
+        return { success: true, path: destPath, format };
 
     } catch (error) {
         console.error('Erro ao exportar projeto:', error);

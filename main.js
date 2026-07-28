@@ -296,8 +296,35 @@ document.addEventListener('DOMContentLoaded', () => {
     loadAppInfo();
 
     // ---------- Pré-visualização da capa ----------
+
+    // A partir de agora só png/jpg/jpeg são aceitos como capa — tanto
+    // selecionando pelo diálogo quanto arrastando e soltando o arquivo.
+    const ALLOWED_COVER_EXTENSIONS = ['png', 'jpg', 'jpeg'];
+    const ALLOWED_COVER_MIME_TYPES = ['image/png', 'image/jpeg'];
+
+    function isAllowedCoverFile(file) {
+        if (!file) {
+            return false;
+        }
+
+        if (file.type && ALLOWED_COVER_MIME_TYPES.includes(file.type)) {
+            return true;
+        }
+
+        // Alguns arquivos arrastados de fora do app não trazem um MIME
+        // type confiável; nesse caso confere pela extensão do nome.
+        const extension = (file.name || '').split('.').pop().toLowerCase();
+
+        return ALLOWED_COVER_EXTENSIONS.includes(extension);
+    }
+
     function handleCoverFile(file) {
-        if (!file || !file.type.startsWith('image/')) return;
+        if (!file) return;
+
+        if (!isAllowedCoverFile(file)) {
+            alert('Só é possível usar imagens nos formatos PNG, JPG ou JPEG.');
+            return;
+        }
 
         // file.path não é mais confiável nas versões atuais do Electron
         // (fica undefined mesmo com contextIsolation ativado). O caminho
@@ -330,11 +357,20 @@ document.addEventListener('DOMContentLoaded', () => {
     coverDropzone.addEventListener('drop', (event) => {
         event.preventDefault();
         coverDropzone.classList.remove('drag-over');
+
         const file = event.dataTransfer.files[0];
-        if (file) {
-            coverInput.files = event.dataTransfer.files;
-            handleCoverFile(file);
+
+        if (!file) {
+            return;
         }
+
+        if (!isAllowedCoverFile(file)) {
+            alert('Só é possível usar imagens nos formatos PNG, JPG ou JPEG.');
+            return;
+        }
+
+        coverInput.files = event.dataTransfer.files;
+        handleCoverFile(file);
     });
 
     // ---------- Projetos em andamento ----------

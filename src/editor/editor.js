@@ -31,6 +31,10 @@
     const charCount = document.getElementById('charCount');
 
     const downloadBtn = document.getElementById('downloadBtn');
+    const exportBtnLabel = document.getElementById('exportBtnLabel');
+    const exportDropdown = document.getElementById('exportDropdown');
+    const exportCaretBtn = document.getElementById('exportCaretBtn');
+    const exportMenu = document.getElementById('exportMenu');
 
     const divider = document.getElementById('divider');
     const editorPane = document.getElementById('editorPane');
@@ -40,6 +44,7 @@
 
     const fontSelect = document.querySelector('.font-select');
     const sizeSelect = document.querySelector('.size-select');
+    const lineHeightSelect = document.querySelector('.lineheight-select');
 
     const copyBtn = document.querySelector('.copy-btn');
 
@@ -62,6 +67,12 @@
     const imageStyleEmptyEl = document.getElementById('imageStyleEmpty');
     const cssEditorEl = document.getElementById('cssEditor');
     const cssEditorLabelEl = document.getElementById('cssEditorLabel');
+    const deleteImageBtn = document.getElementById('deleteImageBtn');
+
+    const deleteImageOverlay = document.getElementById('deleteImageOverlay');
+    const deleteImageModalText = document.getElementById('deleteImageModalText');
+    const cancelDeleteImageBtn = document.getElementById('cancelDeleteImageBtn');
+    const confirmDeleteImageBtn = document.getElementById('confirmDeleteImageBtn');
 
 
     /* =========================================================
@@ -84,6 +95,10 @@
 
     let autosaveTimeout = null;
 
+    // Formato escolhido no dropdown de exportação. EPUB é o padrão;
+    // o usuário pode trocar para PDF pelo menu ao lado do botão.
+    let exportFormat = 'epub';
+
     // Painel de CSS por imagem: null = editando a folha de estilo geral
     // do livro; caso contrário, guarda o id da imagem selecionada na
     // lista e o texto editado se refere só àquela imagem.
@@ -104,6 +119,10 @@
     ];
 
     let activeChapterId = chapters[0].id;
+
+    // Id do capítulo sendo arrastado na barra lateral, enquanto o
+    // usuário reordena a lista arrastando pela alcinha (drag handle).
+    let draggedChapterId = null;
 
 
     /* =========================================================
@@ -211,6 +230,71 @@
         }
 
         return node;
+    }
+
+
+    const BLOCK_SELECTOR = 'h1, h2, blockquote, p, li';
+
+    /*
+     * Retorna todos os elementos de bloco (parágrafos, títulos,
+     * citações, itens de lista) que fazem parte da seleção atual —
+     * um único bloco quando o cursor só está posicionado nele, ou
+     * vários quando o usuário selecionou texto que atravessa mais
+     * de um bloco. Usado pelo espaçamento entre linhas, já que não
+     * existe um execCommand nativo equivalente ao lineHeight.
+     */
+
+    function getSelectedBlocks() {
+
+        const selection = window.getSelection();
+
+        if (!selection.rangeCount) {
+            return [];
+        }
+
+        const range = selection.getRangeAt(0);
+
+        const closestBlock = (node) => {
+
+            if (!node) {
+                return null;
+            }
+
+            if (node.nodeType === Node.TEXT_NODE) {
+                node = node.parentElement;
+            }
+
+            return node && node.closest ?
+                node.closest(BLOCK_SELECTOR) :
+                null;
+        };
+
+        const startBlock = closestBlock(range.startContainer);
+        const endBlock = closestBlock(range.endContainer);
+
+        if (!startBlock) {
+            return [];
+        }
+
+        if (!endBlock || startBlock === endBlock) {
+            return [startBlock];
+        }
+
+        const allBlocks = Array.from(
+            editor.querySelectorAll(BLOCK_SELECTOR)
+        );
+
+        const startIndex = allBlocks.indexOf(startBlock);
+        const endIndex = allBlocks.indexOf(endBlock);
+
+        if (startIndex === -1 || endIndex === -1) {
+            return [startBlock];
+        }
+
+        const from = Math.min(startIndex, endIndex);
+        const to = Math.max(startIndex, endIndex);
+
+        return allBlocks.slice(from, to + 1);
     }
 
 
@@ -474,6 +558,47 @@
     }
 
 
+    function reorderChapters(draggedId, targetId, insertAfter) {
+
+        if (!draggedId || draggedId === targetId) {
+            return;
+        }
+
+        const fromIndex = chapters.findIndex(
+            chapter => chapter.id === draggedId
+        );
+
+        if (fromIndex === -1) {
+            return;
+        }
+
+        const [draggedChapter] = chapters.splice(fromIndex, 1);
+
+        const targetIndex = chapters.findIndex(
+            chapter => chapter.id === targetId
+        );
+
+        if (targetIndex === -1) {
+
+            chapters.push(draggedChapter);
+
+        } else {
+
+            const insertIndex =
+                insertAfter ? targetIndex + 1 : targetIndex;
+
+            chapters.splice(insertIndex, 0, draggedChapter);
+        }
+
+        // A ordem em disco é derivada da posição no array (ver
+        // persistChapter), então regravamos todos os capítulos para
+        // que a nova ordem sobreviva a um fechar/abrir do projeto.
+        chapters.forEach(chapter => persistChapter(chapter));
+
+        renderChapterList();
+    }
+
+
     function startRename(itemEl, chapter) {
 
         const nameSpan = itemEl.querySelector('.chapter-name');
@@ -528,6 +653,16 @@
             item.dataset.id = chapter.id;
 
             item.innerHTML = `
+                <span class="chapter-drag-handle" title="Arrastar para reordenar">
+                    <svg viewBox="0 0 24 24">
+                        <circle cx="9" cy="6" r="1.6"/>
+                        <circle cx="9" cy="12" r="1.6"/>
+                        <circle cx="9" cy="18" r="1.6"/>
+                        <circle cx="15" cy="6" r="1.6"/>
+                        <circle cx="15" cy="12" r="1.6"/>
+                        <circle cx="15" cy="18" r="1.6"/>
+                    </svg>
+                </span>
                 <svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6z"/><path d="M14 3v4h4"/></svg>
                 <span class="chapter-name">${escapeHtmlText(chapter.title)}</span>
                 <button class="chapter-delete" type="button" title="Excluir capítulo">
@@ -558,6 +693,107 @@
             deleteBtn.addEventListener('click', event => {
                 event.stopPropagation();
                 deleteChapter(chapter.id);
+            });
+
+
+            /*
+             * Reordenar arrastando pela alcinha.
+             *
+             * O item só fica arrastável (draggable) enquanto o botão
+             * do mouse estiver pressionado sobre a alcinha — assim o
+             * clique normal e o duplo clique (renomear) continuam
+             * funcionando em qualquer outra parte do item.
+             */
+
+            const dragHandle =
+                item.querySelector('.chapter-drag-handle');
+
+            if (dragHandle) {
+
+                dragHandle.addEventListener('mousedown', () => {
+                    item.setAttribute('draggable', 'true');
+                });
+
+                dragHandle.addEventListener('mouseup', () => {
+
+                    setTimeout(() => {
+
+                        if (!item.classList.contains('dragging')) {
+                            item.removeAttribute('draggable');
+                        }
+                    }, 0);
+                });
+            }
+
+            item.addEventListener('dragstart', event => {
+
+                draggedChapterId = chapter.id;
+
+                event.dataTransfer.effectAllowed = 'move';
+
+                try {
+                    event.dataTransfer.setData('text/plain', chapter.id);
+                } catch (error) {
+                    // Alguns navegadores exigem tipos MIME específicos.
+                }
+
+                requestAnimationFrame(() => {
+                    item.classList.add('dragging');
+                });
+            });
+
+            item.addEventListener('dragend', () => {
+
+                draggedChapterId = null;
+
+                item.classList.remove('dragging');
+                item.removeAttribute('draggable');
+
+                chapterListEl
+                    .querySelectorAll('.chapter-item')
+                    .forEach(el => {
+                        el.classList.remove('drag-over-top', 'drag-over-bottom');
+                    });
+            });
+
+            item.addEventListener('dragover', event => {
+
+                if (!draggedChapterId || draggedChapterId === chapter.id) {
+                    return;
+                }
+
+                event.preventDefault();
+
+                event.dataTransfer.dropEffect = 'move';
+
+                const rect = item.getBoundingClientRect();
+
+                const isAfter =
+                    (event.clientY - rect.top) > rect.height / 2;
+
+                item.classList.toggle('drag-over-top', !isAfter);
+                item.classList.toggle('drag-over-bottom', isAfter);
+            });
+
+            item.addEventListener('dragleave', () => {
+
+                item.classList.remove('drag-over-top', 'drag-over-bottom');
+            });
+
+            item.addEventListener('drop', event => {
+
+                event.preventDefault();
+
+                const isAfter =
+                    item.classList.contains('drag-over-bottom');
+
+                item.classList.remove('drag-over-top', 'drag-over-bottom');
+
+                if (!draggedChapterId || draggedChapterId === chapter.id) {
+                    return;
+                }
+
+                reorderChapters(draggedChapterId, chapter.id, isAfter);
             });
 
             chapterListEl.appendChild(item);
@@ -688,6 +924,16 @@
     }
 
 
+    function updateDeleteImageButtonState() {
+
+        if (!deleteImageBtn) {
+            return;
+        }
+
+        deleteImageBtn.disabled = !selectedImageId;
+    }
+
+
     function selectImageForCss(imageId) {
 
         selectedImageId = imageId;
@@ -695,6 +941,126 @@
         renderImageStyleList();
 
         loadCssFor(imageId);
+
+        updateDeleteImageButtonState();
+    }
+
+
+    function openDeleteImageModal() {
+
+        if (!deleteImageOverlay || !selectedImageId) {
+            return;
+        }
+
+        const image = knownImages.find(
+            item => item.id === selectedImageId
+        );
+
+        if (deleteImageModalText) {
+
+            deleteImageModalText.textContent = image && image.originalName ?
+                `Tem certeza que deseja excluir "${image.originalName}"? Essa ação não pode ser desfeita.` :
+                'Tem certeza que deseja excluir esta imagem? Essa ação não pode ser desfeita.';
+        }
+
+        deleteImageOverlay.classList.add('open');
+    }
+
+
+    function closeDeleteImageModal() {
+
+        if (!deleteImageOverlay) {
+            return;
+        }
+
+        deleteImageOverlay.classList.remove('open');
+    }
+
+
+    async function deleteSelectedImage() {
+
+        if (!projectPath || !selectedImageId || !window.electronAPI || !window.electronAPI.excluirImagem) {
+            closeDeleteImageModal();
+            return;
+        }
+
+        const imageId = selectedImageId;
+
+        const result = await window.electronAPI.excluirImagem({
+            projectPath,
+            imageId
+        });
+
+        if (!result || !result.success) {
+
+            console.error('Erro ao excluir imagem:', result && result.error);
+
+            closeDeleteImageModal();
+
+            return;
+        }
+
+        knownImages = knownImages.filter(
+            item => item.id !== imageId
+        );
+
+        // Volta para a folha de estilo geral, já que a imagem
+        // selecionada (e o CSS dela) não existe mais.
+        selectImageForCss(null);
+
+        closeDeleteImageModal();
+    }
+
+
+    function setupImageDeleteModal() {
+
+        if (deleteImageBtn) {
+
+            deleteImageBtn.addEventListener(
+                'click',
+                openDeleteImageModal
+            );
+        }
+
+        if (cancelDeleteImageBtn) {
+
+            cancelDeleteImageBtn.addEventListener(
+                'click',
+                closeDeleteImageModal
+            );
+        }
+
+        if (confirmDeleteImageBtn) {
+
+            confirmDeleteImageBtn.addEventListener(
+                'click',
+                deleteSelectedImage
+            );
+        }
+
+        if (deleteImageOverlay) {
+
+            deleteImageOverlay.addEventListener(
+                'click',
+                event => {
+
+                    if (event.target === deleteImageOverlay) {
+                        closeDeleteImageModal();
+                    }
+                }
+            );
+        }
+
+        document.addEventListener('keydown', event => {
+
+            if (
+                event.key === 'Escape' &&
+                deleteImageOverlay &&
+                deleteImageOverlay.classList.contains('open')
+            ) {
+                closeDeleteImageModal();
+            }
+        });
     }
 
 
@@ -1095,24 +1461,48 @@
 
     /* =========================================================
        14. INSERÇÃO DE IMAGEM
+       -------------------------------------------------------
+       Só png/jpg/jpeg são aceitos. importAndInsertImages() é o
+       ponto único que copia as imagens para o projeto e as insere
+       no editor — usado tanto pelo botão "Inserir imagem" quanto
+       pelo arrastar-e-soltar (ver "14-B" logo abaixo).
     ========================================================= */
 
-    async function insertImage() {
+    const ALLOWED_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg'];
+
+    function isAllowedImagePath(filePath) {
+        if (!filePath) {
+            return false;
+        }
+
+        const extension = filePath.split('.').pop().toLowerCase();
+
+        return ALLOWED_IMAGE_EXTENSIONS.includes(extension);
+    }
+
+
+    async function importAndInsertImages(imagePaths) {
 
         if (!projectPath) {
             alert('Crie ou abra um projeto antes de inserir imagens.');
             return;
         }
 
-        const imagePaths = await window.electronAPI.selecionarImagens();
-
         if (!imagePaths || imagePaths.length === 0) {
+            return;
+        }
+
+        const allowedPaths = imagePaths.filter(isAllowedImagePath);
+        const rejectedByClient = imagePaths.length - allowedPaths.length;
+
+        if (allowedPaths.length === 0) {
+            alert('Só é possível importar imagens nos formatos PNG, JPG ou JPEG.');
             return;
         }
 
         const result = await window.electronAPI.copiarImagens({
             projectPath,
-            imagePaths
+            imagePaths: allowedPaths
         });
 
         if (!result || !result.success) {
@@ -1146,6 +1536,113 @@
         // Atualiza a lista do painel lateral de CSS por imagem, para as
         // imagens recém-adicionadas aparecerem lá imediatamente.
         loadImagesList();
+
+        const rejectedByServer = (result.skipped || []).length;
+        const totalRejected = rejectedByClient + rejectedByServer;
+
+        if (totalRejected > 0) {
+            alert(
+                'Só é possível importar imagens nos formatos PNG, JPG ou JPEG. ' +
+                totalRejected + ' arquivo(s) foram ignorados.'
+            );
+        }
+    }
+
+
+    async function insertImage() {
+
+        if (!projectPath) {
+            alert('Crie ou abra um projeto antes de inserir imagens.');
+            return;
+        }
+
+        const imagePaths = await window.electronAPI.selecionarImagens();
+
+        await importAndInsertImages(imagePaths);
+    }
+
+
+    /* =========================================================
+       14-B. ARRASTAR E SOLTAR IMAGENS NO EDITOR
+       -------------------------------------------------------
+       Permite arrastar um arquivo de imagem de fora do app (do
+       explorador de arquivos, por exemplo) e soltar dentro da área
+       de escrita para importá-lo direto no capítulo ativo, sem
+       precisar passar pelo diálogo "Inserir imagem".
+    ========================================================= */
+
+    function setupImageDragAndDrop() {
+
+        if (!editor) {
+            return;
+        }
+
+        const hasFiles = event =>
+            !!event.dataTransfer &&
+            Array.from(event.dataTransfer.types || []).includes('Files');
+
+        ['dragenter', 'dragover'].forEach(eventName => {
+
+            editor.addEventListener(eventName, event => {
+
+                if (!hasFiles(event)) {
+                    return;
+                }
+
+                event.preventDefault();
+
+                editor.classList.add('drag-over-image');
+            });
+        });
+
+        ['dragleave', 'dragend'].forEach(eventName => {
+
+            editor.addEventListener(eventName, () => {
+                editor.classList.remove('drag-over-image');
+            });
+        });
+
+        editor.addEventListener('drop', async event => {
+
+            if (!hasFiles(event)) {
+                return;
+            }
+
+            event.preventDefault();
+
+            editor.classList.remove('drag-over-image');
+
+            if (!projectPath) {
+                alert('Crie ou abra um projeto antes de inserir imagens.');
+                return;
+            }
+
+            // Posiciona o cursor no ponto exato onde o arquivo foi
+            // solto, quando o navegador suportar (Chromium/Electron sim).
+            if (document.caretRangeFromPoint) {
+
+                const range = document.caretRangeFromPoint(
+                    event.clientX,
+                    event.clientY
+                );
+
+                if (range && editor.contains(range.startContainer)) {
+
+                    const selection = window.getSelection();
+
+                    selection.removeAllRanges();
+                    selection.addRange(range);
+                }
+            }
+
+            const droppedFiles = Array.from(event.dataTransfer.files || []);
+
+            const imagePaths = droppedFiles
+                .map(file => window.electronAPI.getPathForFile(file))
+                .filter(Boolean);
+
+            await importAndInsertImages(imagePaths);
+        });
     }
 
 
@@ -1315,6 +1812,42 @@
          * O CSS pode controlar a aparência final.
          * O editor continua mantendo a estrutura HTML.
          */
+
+        syncOutput();
+    }
+
+
+    /* =========================================================
+       20.1 ESPAÇAMENTO ENTRE LINHAS
+    ========================================================= */
+
+    function changeLineHeight(value) {
+
+        if (!value) {
+            return;
+        }
+
+        restoreEditorFocus();
+
+        const blocks = getSelectedBlocks();
+
+        if (!blocks.length) {
+            return;
+        }
+
+        blocks.forEach(block => {
+
+            if (value === 'default') {
+
+                block.style.removeProperty(
+                    'line-height'
+                );
+
+            } else {
+
+                block.style.lineHeight = value;
+            }
+        });
 
         syncOutput();
     }
@@ -1552,6 +2085,28 @@
 
 
     /* =========================================================
+       26.1 SELETOR DE ESPAÇAMENTO ENTRE LINHAS
+    ========================================================= */
+
+    function setupLineHeightSelector() {
+
+        if (!lineHeightSelect) {
+            return;
+        }
+
+        lineHeightSelect.addEventListener(
+            'change',
+            () => {
+
+                changeLineHeight(
+                    lineHeightSelect.value
+                );
+            }
+        );
+    }
+
+
+    /* =========================================================
        27. ESTADO DOS BOTÕES
     ========================================================= */
 
@@ -1696,6 +2251,13 @@
          */
 
         updateBlockStyleState();
+
+
+        /*
+         * Estado do seletor de espaçamento entre linhas.
+         */
+
+        updateLineHeightState();
     }
 
 
@@ -1794,6 +2356,46 @@
             blockStyle.value =
                 tag;
         }
+    }
+
+
+    /* =========================================================
+       29.1 ESTADO DO ESPAÇAMENTO ENTRE LINHAS
+    ========================================================= */
+
+    function updateLineHeightState() {
+
+        if (!lineHeightSelect) {
+            return;
+        }
+
+        const node =
+            getSelectionNode();
+
+        if (!node) {
+            return;
+        }
+
+        const block =
+            node.closest ?
+                node.closest(BLOCK_SELECTOR) :
+                null;
+
+        if (!block) {
+            return;
+        }
+
+        const currentValue =
+            block.style.lineHeight || 'default';
+
+        const availableValues =
+            Array.from(lineHeightSelect.options)
+                .map(option => option.value);
+
+        lineHeightSelect.value =
+            availableValues.includes(currentValue) ?
+                currentValue :
+                'default';
     }
 
 
@@ -1988,16 +2590,17 @@
 
 
     /* =========================================================
-       30-B. EXPORTAR PARA .EPUB
+       30-B. EXPORTAR (.EPUB / .PDF)
        -------------------------------------------------------
        Ao clicar em "Exportar": salva o capítulo que está aberto
        no editor (pra não exportar uma versão desatualizada) e
        pede pro processo principal abrir o modal nativo de
-       seleção de pasta. O arquivo .epub é montado e gravado lá
-       no main process (index.js); aqui só tratamos o resultado.
+       seleção de pasta. O arquivo (.epub ou .pdf, conforme o
+       formato escolhido no dropdown) é montado e gravado lá no
+       main process (index.js); aqui só tratamos o resultado.
     ========================================================= */
 
-    async function exportToEpub() {
+    async function exportEbook() {
 
         if (!projectPath) {
             alert('Salve o projeto antes de exportar.');
@@ -2009,21 +2612,29 @@
         }
 
         // Garante que o texto mais recente do capítulo ativo já está
-        // gravado em disco antes de gerar o epub.
+        // gravado em disco antes de gerar o arquivo exportado.
         saveActiveChapterContent();
 
         const originalLabel = downloadBtn.innerHTML;
+        const formatLabel = exportFormat === 'pdf' ? 'PDF' : 'EPUB';
 
         downloadBtn.disabled = true;
         downloadBtn.textContent = 'Exportando...';
 
+        if (exportCaretBtn) {
+            exportCaretBtn.disabled = true;
+        }
+
         try {
 
-            console.log('[exportToEpub] chamando exportarProjeto para:', projectPath);
+            console.log('[exportEbook] chamando exportarProjeto para:', projectPath, 'formato:', exportFormat);
 
-            const result = await window.electronAPI.exportarProjeto(projectPath);
+            const result = await window.electronAPI.exportarProjeto({
+                projectPath,
+                format: exportFormat
+            });
 
-            console.log('[exportToEpub] resultado recebido:', result);
+            console.log('[exportEbook] resultado recebido:', result);
 
             if (!result || result.canceled) {
                 return;
@@ -2034,11 +2645,11 @@
                 return;
             }
 
-            alert('eBook exportado com sucesso em:\n' + result.path);
+            alert('eBook exportado com sucesso (' + formatLabel + ') em:\n' + result.path);
 
         } catch (error) {
 
-            console.error('Erro ao exportar epub:', error);
+            console.error('Erro ao exportar ebook:', error);
 
             alert('Não foi possível exportar o eBook.');
 
@@ -2046,7 +2657,100 @@
 
             downloadBtn.disabled = false;
             downloadBtn.innerHTML = originalLabel;
+
+            if (exportCaretBtn) {
+                exportCaretBtn.disabled = false;
+            }
         }
+    }
+
+
+    /* =========================================================
+       30-C. DROPDOWN DE FORMATO DE EXPORTAÇÃO
+       -------------------------------------------------------
+       O botão principal ("Exportar EPUB"/"Exportar PDF") sempre
+       exporta no formato atualmente selecionado. O botão menor
+       ao lado (seta) abre um menu para trocar esse formato.
+    ========================================================= */
+
+    function setExportFormat(format) {
+
+        exportFormat = format === 'pdf' ? 'pdf' : 'epub';
+
+        if (exportBtnLabel) {
+            exportBtnLabel.textContent = 'Exportar ' + exportFormat.toUpperCase();
+        }
+
+        if (exportMenu) {
+
+            exportMenu.querySelectorAll('.export-menu-item').forEach(item => {
+                item.classList.toggle(
+                    'active',
+                    item.dataset.format === exportFormat
+                );
+            });
+        }
+    }
+
+
+    function closeExportMenu() {
+
+        if (!exportMenu || exportMenu.hidden) {
+            return;
+        }
+
+        exportMenu.hidden = true;
+
+        if (exportCaretBtn) {
+            exportCaretBtn.setAttribute('aria-expanded', 'false');
+        }
+    }
+
+
+    function setupExportDropdown() {
+
+        if (!exportCaretBtn || !exportMenu) {
+            return;
+        }
+
+        exportCaretBtn.addEventListener('click', event => {
+
+            event.stopPropagation();
+
+            const isOpen = !exportMenu.hidden;
+
+            exportMenu.hidden = isOpen;
+
+            exportCaretBtn.setAttribute('aria-expanded', String(!isOpen));
+        });
+
+        exportMenu.querySelectorAll('.export-menu-item').forEach(item => {
+
+            item.addEventListener('click', () => {
+
+                setExportFormat(item.dataset.format);
+
+                closeExportMenu();
+            });
+        });
+
+        // Fecha o menu ao clicar fora do dropdown.
+        document.addEventListener('click', event => {
+
+            if (!exportDropdown || exportDropdown.contains(event.target)) {
+                return;
+            }
+
+            closeExportMenu();
+        });
+
+        // Fecha o menu com Esc.
+        document.addEventListener('keydown', event => {
+
+            if (event.key === 'Escape') {
+                closeExportMenu();
+            }
+        });
     }
 
 
@@ -2517,6 +3221,10 @@ ${cleanHTML()}
         setupSizeSelector();
 
 
+        // Seletor de espaçamento entre linhas.
+        setupLineHeightSelector();
+
+
         // Zoom.
         setupZoom();
 
@@ -2552,9 +3260,15 @@ ${cleanHTML()}
 
             downloadBtn.addEventListener(
                 'click',
-                exportToEpub
+                exportEbook
             );
         }
+
+        // Dropdown de formato de exportação (EPUB / PDF).
+        setupExportDropdown();
+
+        // Arrastar e soltar imagens direto no editor.
+        setupImageDragAndDrop();
 
 
         // Divisor.
@@ -2567,6 +3281,10 @@ ${cleanHTML()}
 
         // Painel de CSS por imagem.
         setupCssEditorPanel();
+
+
+        // Modal de confirmação para excluir imagem.
+        setupImageDeleteModal();
 
 
         // Primeira sincronização.
