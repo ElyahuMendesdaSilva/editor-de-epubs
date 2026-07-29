@@ -653,6 +653,161 @@ ipcMain.handle('listar-imagens', async (event, projectPath) => {
     }
 });
 
+// Lista os arquivos de fonte disponíveis na pasta fonts/ do projeto.
+// Retorna um array com { name, file, format } para cada fonte encontrada.
+ipcMain.handle('listar-fontes', async (event, projectPath) => {
+    try {
+        if (!projectPath) {
+            throw new Error('Nenhum projeto aberto.');
+        }
+
+        const fontsDir = path.join(projectPath, 'fonts');
+        const fontExtensions = ['.ttf', '.otf', '.woff', '.woff2'];
+        const formatMap = {
+            '.ttf': 'truetype',
+            '.otf': 'opentype',
+            '.woff': 'woff',
+            '.woff2': 'woff2'
+        };
+
+        if (!fsSync.existsSync(fontsDir)) {
+            return { success: true, fonts: [] };
+        }
+
+        const files = await fs.readdir(fontsDir);
+        const fonts = [];
+
+        for (const file of files) {
+            const ext = path.extname(file).toLowerCase();
+            if (fontExtensions.includes(ext)) {
+                // Usa o nome do arquivo sem extensão como nome da família
+                const name = path.basename(file, ext)
+                    .replace(/[-_]/g, ' ')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+                fonts.push({ name, file, format: formatMap[ext] });
+            }
+        }
+
+        // Ordena alfabeticamente
+        fonts.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+
+        return { success: true, fonts };
+
+    } catch (error) {
+        console.error('Erro ao listar fontes:', error);
+        return { success: false, error: error.message, fonts: [] };
+    }
+});
+
+// Abre o seletor nativo de fontes (ttf, otf, woff, woff2) e copia os
+// arquivos selecionados para a pasta fonts/ do projeto.
+ipcMain.handle('importar-fonte', async (event, projectPath) => {
+    try {
+        if (!projectPath) {
+            throw new Error('Nenhum projeto aberto.');
+        }
+
+        const dialogResult = await dialog.showOpenDialog({
+            title: 'Selecionar fonte',
+            properties: ['openFile', 'multiSelections'],
+            filters: [
+                { name: 'Fontes', extensions: ['ttf', 'otf', 'woff', 'woff2'] }
+            ]
+        });
+
+        if (dialogResult.canceled || !dialogResult.filePaths || dialogResult.filePaths.length === 0) {
+            return { success: true, fonts: [], canceled: true };
+        }
+
+        const fontsDir = path.join(projectPath, 'fonts');
+        await fs.mkdir(fontsDir, { recursive: true });
+
+        const imported = [];
+        const formatMap = {
+            '.ttf': 'truetype',
+            '.otf': 'opentype',
+            '.woff': 'woff',
+            '.woff2': 'woff2'
+        };
+
+        for (const sourcePath of dialogResult.filePaths) {
+            const ext = path.extname(sourcePath).toLowerCase();
+            const fileName = path.basename(sourcePath);
+            const destPath = path.join(fontsDir, fileName);
+
+            // Evita sobrescrever se o arquivo já existir
+            if (!fsSync.existsSync(destPath)) {
+                await fs.copyFile(sourcePath, destPath);
+            }
+
+            const name = path.basename(fileName, ext)
+                .replace(/[-_]/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+            imported.push({ name, file: fileName, format: formatMap[ext] || 'truetype' });
+        }
+
+        return { success: true, fonts: imported };
+
+    } catch (error) {
+        console.error('Erro ao importar fonte:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// Lista as fontes empacotadas com o programa na pasta src/fonts/.
+// Escaneia subpastas (cada uma com o nome da família) por arquivos
+// .ttf, .otf, .woff, .woff2 e retorna { name, file, format, path }.
+ipcMain.handle('listar-fontes-base', async () => {
+    try {
+        const baseDir = path.join(__dirname, '..', '..', '..', 'src', 'fonts');
+        const fontExtensions = ['.ttf', '.otf', '.woff', '.woff2'];
+        const formatMap = {
+            '.ttf': 'truetype',
+            '.otf': 'opentype',
+            '.woff': 'woff',
+            '.woff2': 'woff2'
+        };
+
+        if (!fsSync.existsSync(baseDir)) {
+            return { success: true, fonts: [] };
+        }
+
+        const families = await fs.readdir(baseDir);
+        const fonts = [];
+
+        for (const family of families) {
+            const familyDir = path.join(baseDir, family);
+            const stat = await fs.stat(familyDir);
+
+            if (!stat.isDirectory()) {
+                continue;
+            }
+
+            const files = await fs.readdir(familyDir);
+
+            for (const file of files) {
+                const ext = path.extname(file).toLowerCase();
+                if (fontExtensions.includes(ext)) {
+                    fonts.push({
+                        name: family,
+                        file: file,
+                        format: formatMap[ext] || 'truetype',
+                        path: familyDir
+                    });
+                }
+            }
+        }
+
+        return { success: true, fonts };
+
+    } catch (error) {
+        console.error('Erro ao listar fontes base:', error);
+        return { success: false, error: error.message, fonts: [] };
+    }
+});
+
 // Decide em qual arquivo .css mora o estilo pedido: 'global' (ou vazio)
 // é a folha de estilo geral do livro; qualquer outro valor é tratado
 // como o id de uma imagem, que tem seu próprio arquivo .css dedicado

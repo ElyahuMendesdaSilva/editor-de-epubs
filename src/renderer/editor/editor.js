@@ -1143,6 +1143,31 @@
         // parágrafo antes que o conteúdo seja persistido/exportado.
         const container = document.createElement('div');
         container.innerHTML = html;
+
+        // Se o conteúdo do editor começar com texto solto (fora de <p>,
+        // <h1>, etc.), envolve num <p> para que o XHTML fique bem formado.
+        // Isso acontece quando o usuário digita diretamente num capítulo
+        // vazio e a primeira linha é armazenada como textNode avulso.
+        const blockTags = ['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
+                           'BLOCKQUOTE', 'UL', 'OL', 'PRE', 'HR', 'TABLE', 'DIV'];
+        const nodesToWrap = [];
+
+        for (let i = 0; i < container.childNodes.length; i++) {
+            const node = container.childNodes[i];
+            const isText = node.nodeType === Node.TEXT_NODE && node.textContent.trim().length > 0;
+            const isInlineElement = node.nodeType === Node.ELEMENT_NODE &&
+                                    !blockTags.includes(node.tagName);
+            if (isText || isInlineElement) {
+                nodesToWrap.push(node);
+            }
+        }
+
+        for (const node of nodesToWrap) {
+            const p = document.createElement('p');
+            node.parentNode.replaceChild(p, node);
+            p.appendChild(node);
+        }
+
         html = container.innerHTML;
 
         // Sempre devolve o HTML "portável", com caminhos relativos de
@@ -1580,7 +1605,78 @@
        10. SINCRONIZAÇÃO PRINCIPAL
     ========================================================= */
 
+    function wrapBareTextInEditor() {
+
+        // Verifica se há texto solto (fora de <p>, <h1>, etc.) diretamente
+        // no editor e envolve em <p> para que o espaçamento visual fique
+        // consistente. Preserva a posição do cursor.
+        const blockTags = ['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
+                           'BLOCKQUOTE', 'UL', 'OL', 'PRE', 'HR', 'TABLE', 'DIV'];
+        const children = editor.childNodes;
+        let needsWrap = false;
+
+        for (let i = 0; i < children.length; i++) {
+            const node = children[i];
+            const isText = node.nodeType === Node.TEXT_NODE && node.textContent.trim().length > 0;
+            const isInlineElement = node.nodeType === Node.ELEMENT_NODE &&
+                                    !blockTags.includes(node.tagName);
+            if (isText || isInlineElement) {
+                needsWrap = true;
+                break;
+            }
+        }
+
+        if (!needsWrap) {
+            return;
+        }
+
+        // Salva posição do cursor
+        const sel = window.getSelection();
+        let savedOffset = 0;
+        let savedNode = null;
+
+        if (sel && sel.rangeCount) {
+            const range = sel.getRangeAt(0);
+            savedNode = range.startContainer;
+            savedOffset = range.startOffset;
+        }
+
+        // Envolve nós soltos em <p>
+        for (let i = children.length - 1; i >= 0; i--) {
+            const node = children[i];
+            const isText = node.nodeType === Node.TEXT_NODE && node.textContent.trim().length > 0;
+            const isInlineElement = node.nodeType === Node.ELEMENT_NODE &&
+                                    !blockTags.includes(node.tagName);
+            if (isText || isInlineElement) {
+                const p = document.createElement('p');
+                node.parentNode.replaceChild(p, node);
+                p.appendChild(node);
+            }
+        }
+
+        // Tenta restaurar o cursor
+        if (savedNode && savedNode.parentNode) {
+            try {
+                const range = document.createRange();
+                range.setStart(savedNode, Math.min(savedOffset, savedNode.textContent.length));
+                range.collapse(true);
+                sel.removeAllRanges();
+                sel.addRange(range);
+            } catch (e) {
+                // Se o nó original foi movido, tenta reposicionar no início
+                try {
+                    editor.focus();
+                } catch (e2) {
+                    // Ignora
+                }
+            }
+        }
+    }
+
     function syncOutput() {
+
+        // Corrige texto solto no editor para manter espaçamento visual
+        wrapBareTextInEditor();
 
         const html = cleanHTML();
 
@@ -2046,6 +2142,12 @@
             return;
         }
 
+        // Só aplica a fonte se houver uma seleção ativa dentro do editor
+        const selection = window.getSelection();
+        if (!selection || !selection.rangeCount || !editor.contains(selection.anchorNode)) {
+            return;
+        }
+
         restoreEditorFocus();
 
         document.execCommand(
@@ -2331,21 +2433,278 @@
        25. SELETOR DE FONTE
     ========================================================= */
 
+    function loadProjectFonts() {
+
+        if (!projectPath || !window.electronAPI || !window.electronAPI.listarFontes) {
+            return Promise.resolve([]);
+        }
+
+        return window.electronAPI.listarFontes(projectPath)
+            .then(result => {
+                if (result && result.success && result.fonts) {
+                    return result.fonts;
+                }
+                return [];
+            })
+            .catch(error => {
+                console.error('Erro ao listar fontes:', error);
+                return [];
+            });
+    }
+
+    function getFontFileUrl(fileName) {
+
+        if (!projectPath) {
+            return '';
+        }
+
+        const normalized = projectPath.replace(/\\/g, '/') + '/fonts/' + fileName;
+        return 'file://' + encodeURI(normalized.startsWith('/') ? normalized : '/' + normalized);
+    }
+
+    function getBuiltinFontFileUrl(familyPath, fileName) {
+
+        const normalized = familyPath.replace(/\\/g, '/') + '/' + fileName;
+        return 'file://' + encodeURI(normalized.startsWith('/') ? normalized : '/' + normalized);
+    }
+
+    function injectFontFaces(fonts, isBuiltin) {
+
+        if (!fonts || fonts.length === 0) {
+            return;
+        }
+
+        // Remove estilo antigo de fontes se existir
+        const styleId = isBuiltin ? 'builtin-font-faces' : 'project-font-faces';
+        const oldStyle = document.getElementById(styleId);
+        if (oldStyle) {
+            oldStyle.remove();
+        }
+
+        // Agrupa por nome de família: só injeta o primeiro arquivo
+        // de cada família para evitar conflito de @font-face
+        const seen = new Set();
+        const unique = [];
+        for (const f of fonts) {
+            const key = f.name.toLowerCase();
+            if (!seen.has(key)) {
+                seen.add(key);
+                unique.push(f);
+            }
+        }
+
+        const cssRules = unique.map(f => {
+            const url = isBuiltin
+                ? getBuiltinFontFileUrl(f.path, f.file)
+                : getFontFileUrl(f.file);
+            return `@font-face {
+    font-family: '${f.name}';
+    src: url('${url}') format('${f.format}');
+    font-display: swap;
+}`;
+        }).join('\n\n');
+
+        const style = document.createElement('style');
+        style.id = styleId;
+        style.textContent = cssRules;
+        document.head.appendChild(style);
+    }
+
+    function populateFontSelect(builtinFonts, projectFonts) {
+
+        if (!fontSelect) {
+            return;
+        }
+
+        // Guarda o valor atual para restaurar depois
+        const currentValue = fontSelect.value;
+
+        // Limpa o select
+        while (fontSelect.options.length > 0) {
+            fontSelect.remove(0);
+        }
+
+        // Option padrão
+        const defaultOption = document.createElement('option');
+        defaultOption.value = '';
+        defaultOption.textContent = 'Fonte...';
+        fontSelect.appendChild(defaultOption);
+
+        // Seção: Fontes do programa (src/fonts)
+        if (builtinFonts.length > 0) {
+            // Agrupa por nome de família (pode ter vários arquivos)
+            const seen = new Set();
+            builtinFonts.forEach(f => {
+                if (!seen.has(f.name)) {
+                    seen.add(f.name);
+                    const option = document.createElement('option');
+                    option.value = f.name;
+                    option.textContent = f.name;
+                    option.dataset.builtinFont = 'true';
+                    fontSelect.appendChild(option);
+                }
+            });
+        }
+
+        // Seção: Fontes do projeto (fonts/)
+        if (projectFonts.length > 0) {
+            const groupLabel = document.createElement('option');
+            groupLabel.disabled = true;
+            groupLabel.textContent = '— Fontes do projeto —';
+            fontSelect.appendChild(groupLabel);
+
+            projectFonts.forEach(f => {
+                const option = document.createElement('option');
+                option.value = f.name;
+                option.textContent = f.name;
+                option.dataset.projectFont = 'true';
+                fontSelect.appendChild(option);
+            });
+        }
+
+        // Opção para importar fonte
+        const importOption = document.createElement('option');
+        importOption.value = '__import__';
+        importOption.textContent = "Adicionar fonte";
+        fontSelect.appendChild(importOption);
+
+        // Tenta restaurar o valor anterior
+        if (currentValue) {
+            for (let i = 0; i < fontSelect.options.length; i++) {
+                if (fontSelect.options[i].value === currentValue) {
+                    fontSelect.value = currentValue;
+                    break;
+                }
+            }
+        }
+    }
+
+    function updateFontSelectorFromSelection() {
+
+        if (!fontSelect) {
+            return;
+        }
+
+        const selection = window.getSelection();
+        if (!selection || !selection.rangeCount || !editor.contains(selection.anchorNode)) {
+            return;
+        }
+
+        const node = selection.anchorNode;
+        let element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+
+        if (!element || !editor.contains(element)) {
+            return;
+        }
+
+        // Sobe até achar um elemento com font-family definida
+        let fontFamily = '';
+        while (element && element !== editor) {
+            const computed = window.getComputedStyle(element);
+            const family = computed.getPropertyValue('font-family').replace(/["']/g, '').trim();
+            if (family && family !== 'serif' && family !== 'sans-serif' && family !== 'monospace') {
+                // Pega o primeiro nome da lista de fallback
+                fontFamily = family.split(',')[0].trim();
+                break;
+            }
+            element = element.parentElement;
+        }
+
+        if (!fontFamily) {
+            return;
+        }
+
+        // Procura a font no dropdown
+        for (let i = 0; i < fontSelect.options.length; i++) {
+            const opt = fontSelect.options[i];
+            if (opt.value && opt.value.toLowerCase() === fontFamily.toLowerCase()) {
+                if (fontSelect.value !== opt.value) {
+                    fontSelect.value = opt.value;
+                    fontSelect.dataset.previousValue = opt.value;
+                }
+                return;
+            }
+        }
+    }
+
     function setupFontSelector() {
 
         if (!fontSelect) {
             return;
         }
 
+        // Carrega as fontes base (src/fonts) e do projeto
+        const builtinPromise = (window.electronAPI && window.electronAPI.listarFontesBase)
+            ? window.electronAPI.listarFontesBase()
+            : Promise.resolve({ fonts: [] });
+
+        const projectPromise = (projectPath && window.electronAPI && window.electronAPI.listarFontes)
+            ? loadProjectFonts()
+            : Promise.resolve([]);
+
+        Promise.all([builtinPromise, projectPromise]).then(([builtinResult, projectFonts]) => {
+            const builtinFonts = (builtinResult && builtinResult.success && builtinResult.fonts) || [];
+            populateFontSelect(builtinFonts, projectFonts);
+            injectFontFaces(builtinFonts, true);
+            injectFontFaces(projectFonts, false);
+        });
+
+        // Atualiza o dropdown conforme a seleção muda no editor
+        editor.addEventListener('mouseup', updateFontSelectorFromSelection);
+        editor.addEventListener('keyup', updateFontSelectorFromSelection);
+
         fontSelect.addEventListener(
             'change',
             () => {
+                const value = fontSelect.value;
 
-                changeFont(
-                    fontSelect.value
-                );
+                if (value === '__import__') {
+                    // Restaura o select para o valor anterior
+                    fontSelect.value = fontSelect.dataset.previousValue || '';
+                    importProjectFont();
+                    return;
+                }
+
+                fontSelect.dataset.previousValue = value;
+                changeFont(value);
             }
         );
+    }
+
+    async function importProjectFont() {
+
+        if (!projectPath || !window.electronAPI || !window.electronAPI.importarFonte) {
+            return;
+        }
+
+        const result = await window.electronAPI.importarFonte(projectPath);
+
+        if (!result || !result.success || !result.fonts || result.fonts.length === 0) {
+            return;
+        }
+
+        // Recarrega as listas de fontes (base + projeto)
+        const builtinResult = (window.electronAPI && window.electronAPI.listarFontesBase)
+            ? await window.electronAPI.listarFontesBase()
+            : { fonts: [] };
+        const builtinFonts = (builtinResult && builtinResult.success && builtinResult.fonts) || [];
+        const projectFonts = await loadProjectFonts();
+        populateFontSelect(builtinFonts, projectFonts);
+        injectFontFaces(builtinFonts, true);
+        injectFontFaces(projectFonts, false);
+
+        // Seleciona a primeira fonte importada
+        if (result.fonts.length > 0 && fontSelect) {
+            const importedName = result.fonts[0].name;
+            for (let i = 0; i < fontSelect.options.length; i++) {
+                if (fontSelect.options[i].value === importedName) {
+                    fontSelect.value = importedName;
+                    // A fonte já está selecionada no dropdown; o usuário
+                    // pode aplicá-la selecionando um texto em seguida
+                    break;
+                }
+            }
+        }
     }
 
 
@@ -3472,6 +3831,16 @@ ${cleanHTML()}
         await loadImagesList();
 
         await loadCssFor(selectedImageId);
+
+        // Carrega as fontes do programa e do projeto e injeta @font-face no editor
+        const builtinResult = (window.electronAPI && window.electronAPI.listarFontesBase)
+            ? await window.electronAPI.listarFontesBase()
+            : { fonts: [] };
+        const builtinFonts = (builtinResult && builtinResult.success && builtinResult.fonts) || [];
+        const projectFonts = await loadProjectFonts();
+        populateFontSelect(builtinFonts, projectFonts);
+        injectFontFaces(builtinFonts, true);
+        injectFontFaces(projectFonts, false);
     }
 
 
