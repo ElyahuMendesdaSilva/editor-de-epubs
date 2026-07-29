@@ -212,6 +212,41 @@ body {
     color: var(--ink);
 }
 
+.notice-modal-content {
+    max-width: 430px;
+}
+
+.notice-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    width: 32px;
+    height: 32px;
+
+    margin-bottom: 14px;
+
+    border-radius: 50%;
+
+    background: #FFF2D7;
+    color: #A86400;
+
+    font-size: 1.1rem;
+    font-weight: 700;
+}
+
+.notice-modal-content .modal-title {
+    margin-bottom: 10px;
+}
+
+.notice-message {
+    margin: 0 0 26px;
+
+    color: var(--ink-soft);
+    font-size: .92rem;
+    line-height: 1.55;
+}
+
 .form-layout {
     display: flex;
     gap: 32px;
@@ -2247,4 +2282,12 @@ body {
     width: 30px;
     height: 30px;
     margin-top: 5px;
+}
+
+.codex-icon {
+    fill: var(--ink);
+    stroke: var(--panel);
+    stroke-width: 2.25;
+    stroke-linecap: round;
+    stroke-linejoin: round;
 }

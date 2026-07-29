@@ -12,6 +12,50 @@ const ALLOWED_IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg'];
 const isAllowedImageExtension = (filePath) =>
     ALLOWED_IMAGE_EXTENSIONS.includes(path.extname(filePath).toLowerCase());
 
+function normalizeProjectTitle(title) {
+    return String(title || 'Sem título')
+        .trim()
+        .replace(/\s+/g, ' ')
+        .toLocaleLowerCase('pt-BR');
+}
+
+function getRegisteredProjectTitles(excludedPath = null) {
+    const registry = readJSONSafe(getRegistryPath(), []);
+    const titles = new Set();
+
+    for (const registeredPath of registry) {
+        if (registeredPath === excludedPath) {
+            continue;
+        }
+
+        const data = readJSONSafe(path.join(registeredPath, 'project.json'), null);
+
+        if (data) {
+            titles.add(normalizeProjectTitle(data.title));
+        }
+    }
+
+    return titles;
+}
+
+function getAvailableProjectTitle(title, existingTitles) {
+    const baseTitle = String(title || 'Sem título').trim() || 'Sem título';
+
+    if (!existingTitles.has(normalizeProjectTitle(baseTitle))) {
+        return baseTitle;
+    }
+
+    let number = 2;
+    let candidate = `${baseTitle} (${number})`;
+
+    while (existingTitles.has(normalizeProjectTitle(candidate))) {
+        number += 1;
+        candidate = `${baseTitle} (${number})`;
+    }
+
+    return candidate;
+}
+
 ipcMain.handle('obter-info-app', async () => {
     try {
         const repository = packageJson.repository;
@@ -50,10 +94,28 @@ ipcMain.handle('criar-projeto', async (event, dados) => {
             throw new Error('Nenhuma pasta de destino foi selecionada.');
         }
 
+        const existingTitles = getRegisteredProjectTitles();
+        let finalTitle = String(title || 'Sem título').trim() || 'Sem título';
+        let renamed = false;
+        let originalTitle = finalTitle;
+
+        if (existingTitles.has(normalizeProjectTitle(finalTitle))) {
+            finalTitle = getAvailableProjectTitle(finalTitle, existingTitles);
+            renamed = true;
+        }
+
         // Cria uma subpasta com o nome do livro dentro da pasta escolhida
         // (ex: "C:\Documentos\eBooks\MeuLivro")
-        const folderName = sanitizeFolderName(title);
+        const folderName = sanitizeFolderName(finalTitle);
         const projectDir = path.join(basePath, folderName);
+
+        if (fsSync.existsSync(path.join(projectDir, 'project.json'))) {
+            return {
+                success: false,
+                code: 'DUPLICATE_PROJECT_FOLDER',
+                error: 'Já existe um projeto nessa pasta.'
+            };
+        }
 
         await fs.mkdir(projectDir, { recursive: true });
         await Promise.all(
@@ -73,7 +135,7 @@ ipcMain.handle('criar-projeto', async (event, dados) => {
         }
 
         const projectData = {
-            title: title || '',
+            title: finalTitle || '',
             author: author || '',
             language: language || 'pt-BR',
             description: description || '',
@@ -92,7 +154,10 @@ ipcMain.handle('criar-projeto', async (event, dados) => {
 
         return {
             success: true,
-            path: projectDir
+            path: projectDir,
+            renamed: renamed,
+            originalTitle: originalTitle,
+            title: finalTitle
         };
 
     } catch (error) {
@@ -122,6 +187,14 @@ ipcMain.handle('atualizar-projeto', async (event, dados) => {
 
         if (!projectData) {
             throw new Error('project.json não encontrado nessa pasta.');
+        }
+
+        if (getRegisteredProjectTitles(projectPath).has(normalizeProjectTitle(title))) {
+            return {
+                success: false,
+                code: 'DUPLICATE_PROJECT_TITLE',
+                error: 'Já existe um projeto com esse título no Dashboard.'
+            };
         }
 
         // Só mexe na capa se uma nova imagem válida (png/jpg/jpeg) foi
@@ -249,10 +322,28 @@ ipcMain.handle('abrir-projeto', async () => {
             return { success: false, error: 'Não foi possível ler o project.json selecionado.' };
         }
 
+        const originalTitle = String(projectData.title || 'Sem título').trim() || 'Sem título';
+        const importedTitle = getAvailableProjectTitle(
+            originalTitle,
+            getRegisteredProjectTitles(projectPath)
+        );
+        const renamed = importedTitle !== originalTitle;
+
+        if (renamed) {
+            projectData.title = importedTitle;
+            await writeJSON(selectedFile, projectData);
+        }
+
         // A adição ao registro (projects.json) acontece em "carregar-projeto",
         // que é chamado assim que o editor abre esse projeto — assim ele já
         // fica salvo em "Em andamento" sem precisar clicar em "Abrir" de novo.
-        return { success: true, path: projectPath };
+        return {
+            success: true,
+            path: projectPath,
+            renamed,
+            originalTitle,
+            title: importedTitle
+        };
 
     } catch (error) {
         console.error('Erro ao abrir projeto:', error);

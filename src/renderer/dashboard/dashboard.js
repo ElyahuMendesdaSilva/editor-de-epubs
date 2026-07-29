@@ -8,6 +8,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const pathFieldGroup = document.getElementById('pathFieldGroup');
     const btnCancel = document.getElementById('btnCancel');
     const form = document.getElementById('newProjectForm');
+    const noticeOverlay = document.getElementById('noticeOverlay');
+    const noticeTitle = document.getElementById('noticeTitle');
+    const noticeMessage = document.getElementById('noticeMessage');
+    const noticeCloseBtn = document.getElementById('noticeCloseBtn');
 
     const btnSelectFolder = document.getElementById('btnSelectFolder');
     const pathInput = document.getElementById('pathInput');
@@ -49,6 +53,36 @@ document.addEventListener('DOMContentLoaded', () => {
     // em modo "editar" e o formulário atualiza esse projeto em vez de
     // criar um novo.
     let editingProjectPath = null;
+    let noticeCloseAction = null;
+
+    function showNotice(title, message, buttonLabel = 'Entendi', onClose = null) {
+        if (!noticeOverlay) {
+            alert(message);
+            return;
+        }
+
+        noticeTitle.textContent = title;
+        noticeMessage.textContent = message;
+        noticeCloseBtn.textContent = buttonLabel;
+        noticeCloseAction = onClose;
+        noticeOverlay.classList.add('active');
+        noticeCloseBtn.focus();
+    }
+
+    function closeNotice() {
+        if (!noticeOverlay) {
+            return;
+        }
+
+        noticeOverlay.classList.remove('active');
+
+        const action = noticeCloseAction;
+        noticeCloseAction = null;
+
+        if (action) {
+            action();
+        }
+    }
 
     // ---------- Modal de novo projeto / edição ----------
 
@@ -136,6 +170,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
+            // Quando o título já estiver em uso no Dashboard, o processo
+            // principal importa o projeto com um sufixo numérico. O aviso
+            // fica visível antes de navegar para o editor.
+            if (result.renamed) {
+                showNotice(
+                    'Projeto renomeado',
+                    `Já existe um projeto chamado "${result.originalTitle}". ` +
+                    `O projeto importado foi renomeado para "${result.title}".`,
+                    'Abrir projeto',
+                    () => openProject(result.path)
+                );
+                return;
+            }
+
             // Abre o projeto no editor. Ao carregar lá, o próprio app já
             // salva o projeto na seção "Em andamento" automaticamente.
             openProject(result.path);
@@ -147,6 +195,18 @@ document.addEventListener('DOMContentLoaded', () => {
             closeModal();
         }
     });
+
+    if (noticeCloseBtn) {
+        noticeCloseBtn.addEventListener('click', closeNotice);
+    }
+
+    if (noticeOverlay) {
+        noticeOverlay.addEventListener('click', event => {
+            if (event.target === noticeOverlay) {
+                closeNotice();
+            }
+        });
+    }
 
     btnSelectFolder.addEventListener('click', async () => {
         const selectedPath = await window.electronAPI.selecionarPasta();
@@ -322,7 +382,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!file) return;
 
         if (!isAllowedCoverFile(file)) {
-            alert('Só é possível usar imagens nos formatos PNG, JPG ou JPEG.');
+            showNotice(
+                'Formato de imagem inválido',
+                'Só é possível usar imagens nos formatos PNG, JPG ou JPEG.'
+            );
             return;
         }
 
@@ -365,7 +428,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (!isAllowedCoverFile(file)) {
-            alert('Só é possível usar imagens nos formatos PNG, JPG ou JPEG.');
+            showNotice(
+                'Formato de imagem inválido',
+                'Só é possível usar imagens nos formatos PNG, JPG ou JPEG.'
+            );
             return;
         }
 
@@ -520,6 +586,12 @@ document.addEventListener('DOMContentLoaded', () => {
             if (result.success) {
                 closeModal();
                 await loadOngoingProjects();
+            } else if (result.code === 'DUPLICATE_PROJECT_TITLE') {
+                showNotice(
+                    'Projeto já existe',
+                    `Já existe um projeto chamado "${titleInput.value.trim()}" no Dashboard. ` +
+                    'Escolha outro título antes de salvar as alterações.'
+                );
             } else {
                 console.error('Erro:', result.error);
                 alert('Não foi possível salvar as alterações: ' + result.error);
@@ -547,6 +619,19 @@ document.addEventListener('DOMContentLoaded', () => {
         const result = await window.electronAPI.criarProjeto(dadosProjeto);
 
         if (result.success) {
+            if (result.renamed) {
+                showNotice(
+                    'Projeto renomeado',
+                    `Já existe um projeto chamado "${result.originalTitle}" no Dashboard. ` +
+                    `O projeto foi criado como "${result.title}".`,
+                    'Abrir projeto',
+                    () => {
+                        window.location.href = 'src/renderer/editor/editor.html?project=' + encodeURIComponent(result.path);
+                    }
+                );
+                return;
+            }
+
             // Leva direto para o editor, já apontando para a pasta do projeto criado
             window.location.href = 'src/renderer/editor/editor.html?project=' + encodeURIComponent(result.path);
         } else {

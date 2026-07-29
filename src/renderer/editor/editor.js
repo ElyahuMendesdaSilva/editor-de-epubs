@@ -53,6 +53,11 @@
     const saveCodeBtn = document.getElementById('saveCodeBtn');
 
     const saveStatus = document.querySelector('.save-status');
+    const searchControl = document.getElementById('searchControl');
+    const searchInput = document.getElementById('searchInput');
+    const searchCount = document.getElementById('searchCount');
+    const searchPreviousBtn = document.getElementById('searchPreviousBtn');
+    const searchNextBtn = document.getElementById('searchNextBtn');
 
     const zoomButtons = document.querySelectorAll('.zoom-btn');
     const zoomTrack = document.querySelector('.zoom-track span');
@@ -111,6 +116,12 @@
     // do botão de salvar) descarta as alterações e volta ao ícone de
     // lápis, sem tocar no conteúdo do editor.
     let isEditingCode = false;
+
+    let searchMatches = [];
+    let activeSearchMatchIndex = -1;
+
+    const SEARCH_HIGHLIGHT_NAME = 'editor-search-match';
+    const ACTIVE_SEARCH_HIGHLIGHT_NAME = 'editor-search-active';
 
     // Capítulos: cada um guarda seu próprio HTML. O editor sempre mostra
     // o conteúdo do capítulo ativo; trocar de capítulo salva o atual antes.
@@ -1124,6 +1135,16 @@
             '</p>'
         );
 
+        // Um <hr> (assim como títulos, listas e citações) não pode ser
+        // filho de <p> em XHTML. O navegador permite que isso aconteça ao
+        // inserir um nó diretamente no Range do contenteditable, mas o
+        // parser de XML usado por leitores EPUB rejeita esse documento.
+        // Reinterpretar o fragmento pelo parser HTML separa esses blocos do
+        // parágrafo antes que o conteúdo seja persistido/exportado.
+        const container = document.createElement('div');
+        container.innerHTML = html;
+        html = container.innerHTML;
+
         // Sempre devolve o HTML "portável", com caminhos relativos de
         // imagem (../images/arquivo.jpg) em vez das URLs file:// usadas
         // só para exibição em tela — é essa versão que vai para o
@@ -1343,6 +1364,219 @@
 
 
     /* =========================================================
+       10-A. BUSCA NO CAPÍTULO
+    ========================================================= */
+
+    function escapeRegExp(text) {
+
+        return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+
+    function clearSearchHighlights() {
+
+        searchMatches = [];
+        activeSearchMatchIndex = -1;
+
+        if (window.CSS && CSS.highlights) {
+            CSS.highlights.delete(SEARCH_HIGHLIGHT_NAME);
+            CSS.highlights.delete(ACTIVE_SEARCH_HIGHLIGHT_NAME);
+        }
+    }
+
+
+    function updateSearchControls() {
+
+        const hasSearch = searchInput && searchInput.value.trim();
+        const hasMatches = searchMatches.length > 0;
+
+        if (searchCount) {
+            searchCount.textContent = hasSearch ?
+                (hasMatches ? `${activeSearchMatchIndex + 1}/${searchMatches.length}` : '0/0') :
+                '';
+        }
+
+        if (searchPreviousBtn) {
+            searchPreviousBtn.disabled = !hasMatches;
+        }
+
+        if (searchNextBtn) {
+            searchNextBtn.disabled = !hasMatches;
+        }
+    }
+
+
+    function refreshSearchHighlights() {
+
+        clearSearchHighlights();
+
+        if (!searchInput || !searchInput.value.trim()) {
+            updateSearchControls();
+            return;
+        }
+
+        const query = searchInput.value.trim();
+        const textNodes = [];
+        const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+        let node;
+        let fullText = '';
+
+        while ((node = walker.nextNode())) {
+            if (!node.nodeValue) {
+                continue;
+            }
+
+            textNodes.push({
+                node,
+                start: fullText.length,
+                end: fullText.length + node.nodeValue.length
+            });
+
+            fullText += node.nodeValue;
+        }
+
+        const pattern = new RegExp(escapeRegExp(query), 'gi');
+        let match;
+
+        while ((match = pattern.exec(fullText))) {
+            const matchStart = match.index;
+            const matchEnd = matchStart + match[0].length;
+            const start = textNodes.find(item => item.end > matchStart);
+            const end = textNodes.find(item => item.end >= matchEnd);
+
+            if (!start || !end) {
+                continue;
+            }
+
+            const range = document.createRange();
+            range.setStart(start.node, matchStart - start.start);
+            range.setEnd(end.node, matchEnd - end.start);
+            searchMatches.push(range);
+        }
+
+        if (window.CSS && CSS.highlights) {
+            CSS.highlights.set(
+                SEARCH_HIGHLIGHT_NAME,
+                new Highlight(...searchMatches)
+            );
+        }
+
+        if (searchMatches.length) {
+            activeSearchMatchIndex = 0;
+            updateActiveSearchMatch(false);
+        } else {
+            updateSearchControls();
+        }
+    }
+
+
+    function updateActiveSearchMatch(shouldScroll = true) {
+
+        if (!searchMatches.length) {
+            updateSearchControls();
+            return;
+        }
+
+        const activeRange = searchMatches[activeSearchMatchIndex];
+
+        if (window.CSS && CSS.highlights) {
+            CSS.highlights.set(
+                ACTIVE_SEARCH_HIGHLIGHT_NAME,
+                new Highlight(activeRange)
+            );
+        }
+
+        updateSearchControls();
+
+        if (shouldScroll) {
+            const target = activeRange.startContainer.parentElement;
+            if (target) {
+                target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            }
+        }
+    }
+
+
+    function navigateSearchMatch(direction) {
+
+        if (!searchMatches.length) {
+            return;
+        }
+
+        activeSearchMatchIndex =
+            (activeSearchMatchIndex + direction + searchMatches.length) % searchMatches.length;
+
+        updateActiveSearchMatch();
+    }
+
+
+    function openSearch() {
+
+        if (!searchControl || !searchInput) {
+            return;
+        }
+
+        searchControl.hidden = false;
+        searchInput.focus();
+        searchInput.select();
+        refreshSearchHighlights();
+    }
+
+
+    function closeSearch() {
+
+        if (!searchControl || !searchInput) {
+            return;
+        }
+
+        searchInput.value = '';
+        clearSearchHighlights();
+        updateSearchControls();
+        searchControl.hidden = true;
+        editor.focus();
+    }
+
+
+    function setupSearch() {
+
+        if (!searchControl || !searchInput) {
+            return;
+        }
+
+        searchInput.addEventListener('input', refreshSearchHighlights);
+
+        searchInput.addEventListener('keydown', event => {
+
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                navigateSearchMatch(event.shiftKey ? -1 : 1);
+            }
+        });
+
+        searchPreviousBtn.addEventListener('click', () => navigateSearchMatch(-1));
+        searchNextBtn.addEventListener('click', () => navigateSearchMatch(1));
+
+        document.addEventListener('keydown', event => {
+
+            const modifier = event.ctrlKey || event.metaKey;
+
+            if (modifier && event.key.toLowerCase() === 'f') {
+                event.preventDefault();
+                openSearch();
+                return;
+            }
+
+            if (event.key === 'Escape' && !searchControl.hidden) {
+                event.preventDefault();
+                closeSearch();
+            }
+        });
+
+        updateSearchControls();
+    }
+
+
+    /* =========================================================
        10. SINCRONIZAÇÃO PRINCIPAL
     ========================================================= */
 
@@ -1360,6 +1594,10 @@
         updateToolbarState();
 
         scheduleAutosave();
+
+        if (searchControl && !searchControl.hidden) {
+            refreshSearchHighlights();
+        }
     }
 
 
@@ -1715,9 +1953,58 @@
         pageBreak.className =
             'page-break';
 
-        insertNodeAtCursor(
-            pageBreak
-        );
+        const selection = window.getSelection();
+
+        if (
+            !selection.rangeCount ||
+            !editor.contains(selection.anchorNode)
+        ) {
+            insertNodeAtCursor(pageBreak);
+            return;
+        }
+
+        const range = selection.getRangeAt(0);
+
+        // Ao inserir um <hr> no meio de um parágrafo, separamos o conteúdo
+        // posterior em outro <p>. Assim, o <hr> fica como filho direto do
+        // editor (e, no arquivo, do <body>), nunca dentro de um <p>.
+        let startNode = range.startContainer;
+        if (startNode.nodeType === Node.TEXT_NODE) {
+            startNode = startNode.parentElement;
+        }
+
+        const paragraph = startNode && startNode.closest ?
+            startNode.closest('p') :
+            null;
+
+        if (!paragraph || !editor.contains(paragraph)) {
+            insertNodeAtCursor(pageBreak);
+            return;
+        }
+
+        range.deleteContents();
+
+        const trailingRange = document.createRange();
+        trailingRange.setStart(range.startContainer, range.startOffset);
+        trailingRange.setEndAfter(paragraph);
+
+        const trailingContent = trailingRange.extractContents();
+        const trailingParagraph = paragraph.cloneNode(false);
+        trailingParagraph.appendChild(trailingContent);
+
+        paragraph.insertAdjacentElement('afterend', pageBreak);
+
+        if (trailingParagraph.hasChildNodes()) {
+            pageBreak.insertAdjacentElement('afterend', trailingParagraph);
+        }
+
+        if (!paragraph.hasChildNodes()) {
+            paragraph.remove();
+        }
+
+        setCaretAfter(pageBreak);
+        restoreEditorFocus();
+        syncOutput();
     }
 
 
@@ -3203,6 +3490,9 @@ ${cleanHTML()}
 
         // Eventos do editor.
         setupEditorEvents();
+
+        // Busca no capítulo (Ctrl/Cmd + F).
+        setupSearch();
 
 
         // Botões de formatação.

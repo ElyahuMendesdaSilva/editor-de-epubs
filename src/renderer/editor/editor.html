@@ -48,6 +48,26 @@
 
         <div class="header-actions">
 
+            <div class="search-control" id="searchControl" hidden>
+                <div class="search-input-wrap">
+                    <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <circle cx="11" cy="11" r="6" />
+                        <path d="m16 16 4 4" />
+                    </svg>
+                    <input id="searchInput" type="search" placeholder="Buscar no capítulo" aria-label="Buscar no capítulo" autocomplete="off" />
+                </div>
+
+                <span class="search-count" id="searchCount" aria-live="polite"></span>
+
+                <button class="search-nav-btn" id="searchPreviousBtn" type="button" title="Resultado anterior" aria-label="Resultado anterior">
+                    <svg viewBox="0 0 24 24"><path d="m6 14 6-6 6 6" /></svg>
+                </button>
+
+                <button class="search-nav-btn" id="searchNextBtn" type="button" title="Próximo resultado" aria-label="Próximo resultado">
+                    <svg viewBox="0 0 24 24"><path d="m6 10 6 6 6-6" /></svg>
+                </button>
+            </div>
+
             <div class="save-status">
                 <span class="save-dot"></span>
                 Salvo
