@@ -112,4 +112,3 @@ Desenvolvido por [elyahumendes](https://github.com/ElyahuMendesdaSilva)
 
 ## Licença
 Este projeto está sob a licença GNU General Public License v3.0 (GPL-3.0). Você é livre para usar, estudar, modificar e redistribuir este software. Qualquer versão modificada ou trabalho derivado que você distribuir também deve ser mantido sob a licença GPL-3.0 (copyleft). Veja o arquivo LICENSE para mais detalhes.
->>>>>>> experimental
