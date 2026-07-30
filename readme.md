@@ -70,41 +70,6 @@ Gera um arquivo `.pdf` montando um HTML completo com CSS embutido, fontes inclus
 ## Status
 O projeto está em desenvolvimento ativo.
 
-## Histórico de mudanças
-
-### v0.0.3 (jul/2026)
-
-#### Adicionado
-- Exportação para **PDF** (`src/main/services/pdf-exporter.js`)
-- Sistema de **fontes nativas** (Arial, Georgia, Inter, Times New Roman) para renderização nos arquivos exportados
-- **Importação de fontes** externas por projeto
-- **Prevenção de projetos duplicados** — renomeia automaticamente títulos repetidos
-- **Configuração de empacotamento** via Electron Builder (Windows NSIS/portable, Linux AppImage/deb)
-- **Script de verificação de sintaxe** (`scripts/check-syntax.js`)
-- Ícones de build para Windows e Linux (`build/icon.ico`, `build/icon.png`)
-- Registro de projetos (`src/main/services/project-registry.js`) para persistência do dashboard
-
-#### Atualizado
-- **Editor** — barra de busca textual, seletor de fonte/tamanho/entrelinha, dropdown de exportação (EPUB/PDF), edição inline do código XHTML
-- **Dashboard** — seção "Em andamento" com cards de projetos, tela de configurações com dados do app, toggle de tema escuro/claro
-- **IPC handlers** — novos canais: `listar-fontes`, `listar-fontes-base`, `importar-fonte`, `ler-css`, `salvar-css`, `excluir-imagem`, `excluir-capitulo`, `obter-info-app`
-- **Preload.js** — API exposta para todas as novas funcionalidades do IPC
-- **Gerenciamento de imagens** — listagem, exclusão e estilização individual por CSS
-- **Gerenciamento de capítulos** — exclusão individual com confirmação
-- `package.json` — versão 0.0.3, scripts de distribuição, configuração do Electron Builder
-
-#### Corrigido
-- **Erro ao excluir projetos** — validação e feedback visual no dashboard
-- **Tags void no XHTML** — `<img>`, `<br>`, `<hr>` etc. agora são fechadas corretamente para conformidade com XML/EPUB
-- **Entidades HTML nomeadas** — `&nbsp;`, `&mdash;`, `&rdquo;` etc. são convertidas para referências numéricas válidas em XML
-- **Criação de projetos duplicados** — bloqueio de títulos e pastas repetidas
-- **Flash de tema** — script inline no `<head>` aplica o tema antes da primeira pintura
-
-### v0.0.2 (jul/2026)
-- Estrutura inicial do Electron com dashboard e editor
-- Geração manual de `.epub` (ZIP nativo via `zlib`)
-- Gerenciamento básico de capítulos
-- Modo escuro/claro
 
 ## Créditos
 
