@@ -1,7 +1,7 @@
 {
   "name": "editor-de-epubs",
   "productName": "Editor de eBook",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Um editor minimalista para transformar algumas novels em epub",
   "license": "SEE LICENSE IN LICENSE",
   "author": "elyahumendes",
@@ -9,7 +9,7 @@
   "main": "index.js",
   "scripts": {
     "start": "electron .",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node scripts/check-syntax.js",
     "dist": "electron-builder",
     "dist:win": "electron-builder --win",
     "dist:linux": "electron-builder --linux"

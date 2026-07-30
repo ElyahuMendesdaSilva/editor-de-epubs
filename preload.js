@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     atualizarProjeto: (dados) => {
         return ipcRenderer.invoke('atualizar-projeto', dados);
     },
+    excluirProjeto: (projectPath) => ipcRenderer.invoke('excluir-projeto', projectPath),
     selecionarImagens: () => ipcRenderer.invoke('selecionar-imagens'),
     copiarImagens: (dados) => ipcRenderer.invoke('copiar-imagens', dados),
     excluirImagem: (dados) => ipcRenderer.invoke('excluir-imagem', dados),
@@ -35,5 +36,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Aceita tanto uma string (caminho do projeto, formato clássico)
     // quanto um objeto { projectPath, format } para permitir escolher
     // entre exportar em EPUB ou PDF.
+    listarFontes: (projectPath) => ipcRenderer.invoke('listar-fontes', projectPath),
+    listarFontesBase: () => ipcRenderer.invoke('listar-fontes-base'),
+    importarFonte: (projectPath) => ipcRenderer.invoke('importar-fonte', projectPath),
     exportarProjeto: (dados) => ipcRenderer.invoke('exportar-projeto', dados)
 });
