@@ -1,4 +1,4 @@
-const { dialog, ipcMain } = require('electron');
+const { app, dialog, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
 const fsSync = require('fs');
@@ -86,13 +86,25 @@ ipcMain.handle('obter-info-app', async () => {
 });
 
 
+ipcMain.handle('obter-diretorio-usuario', async () => {
+    try {
+        return {
+            success: true,
+            homeDir: app.getPath('home')
+        };
+    } catch (error) {
+        console.error('Erro ao obter o diretório do usuário:', error);
+        return { success: false, error: error.message };
+    }
+});
+
 ipcMain.handle('criar-projeto', async (event, dados) => {
     try {
-        const { title, author, language, description, basePath, coverPath } = dados;
+        const { title, author, language, description, coverPath } = dados;
 
-        if (!basePath) {
-            throw new Error('Nenhuma pasta de destino foi selecionada.');
-        }
+        // Se nenhuma pasta foi informada, usa a pasta do usuário
+        // (ex.: /home/usuario no Linux, C:\Users\usuario no Windows).
+        const basePath = dados.basePath || app.getPath('home');
 
         const existingTitles = getRegisteredProjectTitles();
         let finalTitle = String(title || 'Sem título').trim() || 'Sem título';
@@ -105,7 +117,7 @@ ipcMain.handle('criar-projeto', async (event, dados) => {
         }
 
         // Cria uma subpasta com o nome do livro dentro da pasta escolhida
-        // (ex: "C:\Documentos\eBooks\MeuLivro")
+        // (ex.: "/home/usuario/MeuLivro" no Linux, "C:\Users\usuario\MeuLivro" no Windows)
         const folderName = sanitizeFolderName(finalTitle);
         const projectDir = path.join(basePath, folderName);
 

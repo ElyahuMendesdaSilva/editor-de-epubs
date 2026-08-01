@@ -92,13 +92,39 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ---------- Modal de novo projeto / edição ----------
 
-    const openModal = () => {
+    // Caminho padrão sugerido para novos projetos: a pasta do usuário
+    // (/home/usuario no Linux, C:\Users\usuario no Windows).
+    let defaultProjectPath = '';
+
+    async function loadDefaultProjectPath() {
+        if (!window.electronAPI || typeof window.electronAPI.obterDiretorioUsuario !== 'function') {
+            return;
+        }
+
+        try {
+            const result = await window.electronAPI.obterDiretorioUsuario();
+
+            if (result && result.success && result.homeDir) {
+                defaultProjectPath = result.homeDir;
+            }
+        } catch (error) {
+            console.error('Não foi possível obter o diretório do usuário:', error);
+        }
+    }
+
+    const openModal = async () => {
         editingProjectPath = null;
 
         modalTitleEl.textContent = 'Novo eBook';
         submitProjectBtn.textContent = 'Salvar';
         pathFieldGroup.hidden = false;
-        pathInput.value = 'C:\\Documentos\\eBooks';
+        btnSelectFolder.hidden = false;
+
+        if (!defaultProjectPath) {
+            await loadDefaultProjectPath();
+        }
+
+        pathInput.value = defaultProjectPath || '';
 
         if (btnDeleteProject) {
             btnDeleteProject.hidden = true;
@@ -115,10 +141,12 @@ document.addEventListener('DOMContentLoaded', () => {
         modalTitleEl.textContent = 'Editar eBook';
         submitProjectBtn.textContent = 'Salvar alterações';
 
-        // O local do projeto não é editável aqui (mudar de pasta
-        // exigiria mover a pasta inteira no disco), então o campo
-        // fica escondido nesse modo.
-        pathFieldGroup.hidden = true;
+        // O local do projeto é exibido apenas para consulta (mudar de
+        // pasta exigiria mover a pasta inteira no disco), então o botão
+        // de selecionar pasta fica oculto nesse modo.
+        pathFieldGroup.hidden = false;
+        pathInput.value = project.path || '';
+        btnSelectFolder.hidden = true;
 
         titleInput.value = project.title || '';
         authorInput.value = project.author || '';
@@ -153,6 +181,7 @@ document.addEventListener('DOMContentLoaded', () => {
         coverPreviewImg.src = '';
         coverDropzone.classList.remove('has-image');
         pathFieldGroup.hidden = false;
+        btnSelectFolder.hidden = false;
 
         if (btnDeleteProject) {
             btnDeleteProject.hidden = true;
