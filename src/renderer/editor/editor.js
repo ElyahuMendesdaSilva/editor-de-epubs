@@ -38,6 +38,7 @@
 
     const divider = document.getElementById('divider');
     const editorPane = document.getElementById('editorPane');
+    const pageEl = document.querySelector('.page');
     const workspace = document.querySelector('.workspace');
     const sidebar = document.getElementById('sidebar');
     const sidebarDivider = document.getElementById('sidebarDivider');
@@ -3801,11 +3802,14 @@
 
     function updateZoom() {
 
-        if (!editor) {
+        if (!pageEl) {
             return;
         }
 
-        editor.style.zoom =
+        // O zoom redimensiona o visualizador inteiro (a folha/página),
+        // não só o texto: página, texto e imagens crescem juntos, como
+        // no zoom de um leitor de PDF.
+        pageEl.style.zoom =
             `${currentZoom}%`;
 
         if (zoomValueEl) {

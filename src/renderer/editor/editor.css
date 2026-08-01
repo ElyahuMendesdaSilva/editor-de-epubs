@@ -1541,11 +1541,9 @@ body {
 
     flex: 1;
 
-    overflow-y: auto;
+    overflow: auto;
 
     display: flex;
-
-    justify-content: center;
 
     padding: 22px 30px 36px;
 }
@@ -1560,6 +1558,8 @@ body {
     max-width: 680px;
 
     min-height: 900px;
+
+    margin: 0 auto;
 
     align-self: flex-start;
 
