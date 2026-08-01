@@ -5,10 +5,6 @@
   "description": "Um editor minimalista para transformar algumas novels em epub",
   "license": "SEE LICENSE IN LICENSE",
   "author": "elyahumendes",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/ElyahuMendesdaSilva/editor-de-epubs.git"
-  },
   "type": "commonjs",
   "main": "index.js",
   "scripts": {
@@ -16,8 +12,7 @@
     "test": "node scripts/check-syntax.js",
     "dist": "electron-builder",
     "dist:win": "electron-builder --win",
-    "dist:linux": "electron-builder --linux",
-    "release": "electron-builder --publish always"
+    "dist:linux": "electron-builder --linux"
   },
   "devDependencies": {
     "electron": "^43.2.0",
@@ -34,21 +29,19 @@
     "directories": {
       "output": "release"
     },
-    "publish": {
-      "provider": "github",
-      "owner": "ElyahuMendesdaSilva",
-      "repo": "editor-de-epubs",
-      "releaseType": "release"
-    },
     "win": {
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         },
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ]
     },
@@ -60,11 +53,15 @@
       "target": [
         {
           "target": "AppImage",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         },
         {
           "target": "deb",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "category": "Office",
