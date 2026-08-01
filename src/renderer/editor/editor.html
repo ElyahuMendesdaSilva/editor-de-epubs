@@ -364,6 +364,21 @@
         <div class="toolbar-spacer"></div>
 
         <div class="tool-group">
+            <button class="tool-btn" id="fullPageImageBtn" title="Ocupar uma página inteira">
+                <svg viewBox="0 0 24 24">
+                    <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z" />
+                    <path d="M14 3v6h6" />
+                    <circle cx="9" cy="13" r="1.5" />
+                    <path d="m6 18 3-3 2.5 2.5L13 16l4 4" />
+                </svg>
+            </button>
+
+            <button class="tool-btn" id="fullscreenImageBtn" title="Ver em tela cheia">
+                <svg viewBox="0 0 24 24">
+                    <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
+                </svg>
+            </button>
+
             <button class="tool-btn image-delete-btn" id="deleteImageFromDocBtn" title="Remover imagem do documento">
                 <svg viewBox="0 0 24 24">
                     <path d="M4 7h16M9 7V4h6v3M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13M10 11v6M14 11v6" />
@@ -531,6 +546,21 @@
 
         </section>
     </main>
+
+
+    <!-- Visualização em tela cheia da imagem selecionada -->
+
+    <div class="image-fullscreen-overlay" id="imageFullscreenOverlay" hidden>
+
+        <button type="button" class="image-fullscreen-close" id="imageFullscreenCloseBtn" title="Fechar (Esc)">
+            <svg viewBox="0 0 24 24">
+                <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+        </button>
+
+        <img id="imageFullscreenImg" alt="" />
+
+    </div>
 
 
     <!-- Modal de confirmação: excluir imagem -->

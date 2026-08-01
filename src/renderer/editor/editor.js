@@ -48,6 +48,11 @@
     const imageToolbar = document.getElementById('imageToolbar');
     const imageWidthSelect = document.getElementById('imageWidthSelect');
     const deleteImageFromDocBtn = document.getElementById('deleteImageFromDocBtn');
+    const fullscreenImageBtn = document.getElementById('fullscreenImageBtn');
+    const fullPageImageBtn = document.getElementById('fullPageImageBtn');
+    const imageFullscreenOverlay = document.getElementById('imageFullscreenOverlay');
+    const imageFullscreenImg = document.getElementById('imageFullscreenImg');
+    const imageFullscreenCloseBtn = document.getElementById('imageFullscreenCloseBtn');
     const imageAlignBtns = Array.from(
         document.querySelectorAll('.image-align-btn')
     );
@@ -2136,6 +2141,14 @@
             selectedImageEl = null;
         }
 
+        // Descarta estados de imagens que saíram do documento (troca de
+        // capítulo recria o DOM, deixando referências antigas no Map).
+        for (const img of fullPageImagesState.keys()) {
+            if (!img.isConnected) {
+                fullPageImagesState.delete(img);
+            }
+        }
+
         if (textToolbar) {
             textToolbar.hidden = false;
         }
@@ -2203,6 +2216,11 @@
             return;
         }
 
+        const isFullPage = selectedImageEl.dataset.fullPage === '1';
+
+        // Em página inteira o tamanho é fixo; desabilita o seletor de largura.
+        imageWidthSelect.disabled = isFullPage;
+
         const width = Math.round(
             parseFloat(selectedImageEl.style.width)
         );
@@ -2212,6 +2230,7 @@
             updateImageAlignButtons(
                 getImageAlignment(selectedImageEl)
             );
+            updateImageFullPageButton();
             return;
         }
 
@@ -2232,6 +2251,8 @@
         updateImageAlignButtons(
             getImageAlignment(selectedImageEl)
         );
+
+        updateImageFullPageButton();
     }
 
     function setupImageSelection() {
@@ -2267,8 +2288,10 @@
             const insideEditor = editor.contains(event.target);
             const insideImageToolbar = imageToolbar &&
                 imageToolbar.contains(event.target);
+            const insideFullscreen = imageFullscreenOverlay &&
+                imageFullscreenOverlay.contains(event.target);
 
-            if (!insideEditor && !insideImageToolbar) {
+            if (!insideEditor && !insideImageToolbar && !insideFullscreen) {
                 deselectImage();
             }
         });
@@ -2369,6 +2392,280 @@
                 syncOutput();
             });
         }
+
+        if (fullPageImageBtn) {
+
+            fullPageImageBtn.addEventListener('click', () => {
+
+                if (!selectedImageEl) {
+                    return;
+                }
+
+                setImageFullPage(
+                    selectedImageEl.dataset.fullPage !== '1'
+                );
+            });
+        }
+    }
+
+    function setupImageFullscreen() {
+
+        if (!fullscreenImageBtn || !imageFullscreenOverlay || !imageFullscreenImg) {
+            return;
+        }
+
+        const openImageFullscreen = () => {
+
+            if (!selectedImageEl) {
+                return;
+            }
+
+            imageFullscreenImg.src =
+                selectedImageEl.currentSrc || selectedImageEl.src;
+
+            imageFullscreenImg.alt =
+                selectedImageEl.alt || '';
+
+            imageFullscreenOverlay.hidden = false;
+        };
+
+        const closeImageFullscreen = () => {
+
+            imageFullscreenOverlay.hidden = true;
+
+            imageFullscreenImg.removeAttribute('src');
+        };
+
+        fullscreenImageBtn.addEventListener(
+            'click',
+            openImageFullscreen
+        );
+
+        if (imageFullscreenCloseBtn) {
+
+            imageFullscreenCloseBtn.addEventListener(
+                'click',
+                closeImageFullscreen
+            );
+        }
+
+        // Clicar fora da imagem (ou na própria imagem) fecha a tela cheia.
+        imageFullscreenOverlay.addEventListener('click', event => {
+
+            if (
+                event.target === imageFullscreenOverlay ||
+                event.target === imageFullscreenImg
+            ) {
+                closeImageFullscreen();
+            }
+        });
+
+        document.addEventListener('keydown', event => {
+
+            if (
+                event.key === 'Escape' &&
+                !imageFullscreenOverlay.hidden
+            ) {
+                closeImageFullscreen();
+            }
+        });
+    }
+
+    /* =========================================================
+       14-D. IMAGEM EM PÁGINA INTEIRA
+       -------------------------------------------------------
+       O botão de página inteira faz a imagem ocupar uma página
+       inteira do documento: ganha quebras de página antes e
+       depois e é exibida no tamanho da página. Clicar de novo
+       desfaz, restaurando o tamanho/alinhamento anteriores.
+    ========================================================= */
+
+    // Guarda os estilos inline originais das imagens em modo página
+    // inteira, para restaurá-los ao desfazer o modo.
+    const fullPageImagesState = new Map();
+
+    function getImagePageContainer(img) {
+
+        // Depois de salvar/recarregar, o cleanHTML pode re-envolver a
+        // imagem num <p>; nesse caso as quebras de página ficam ao redor
+        // do <p>, não da imagem.
+        const parent = img.parentNode;
+
+        return parent && parent.tagName === 'P' ? parent : img;
+    }
+
+    function detachImageFromParagraph(img) {
+
+        const parent = img.parentNode;
+
+        if (!parent || parent === editor || parent.tagName !== 'P') {
+            return;
+        }
+
+        const beforeNodes = [];
+        const afterNodes = [];
+        let seenImage = false;
+
+        for (const child of Array.from(parent.childNodes)) {
+            if (child === img) {
+                seenImage = true;
+                continue;
+            }
+
+            if (seenImage) {
+                afterNodes.push(child);
+            } else {
+                beforeNodes.push(child);
+            }
+        }
+
+        if (beforeNodes.length > 0) {
+            const paragraph = document.createElement('p');
+            beforeNodes.forEach(node => paragraph.appendChild(node));
+            parent.parentNode.insertBefore(paragraph, parent);
+        }
+
+        parent.parentNode.insertBefore(img, parent);
+
+        if (afterNodes.length > 0) {
+            const paragraph = document.createElement('p');
+            afterNodes.forEach(node => paragraph.appendChild(node));
+            parent.parentNode.insertBefore(paragraph, img.nextSibling);
+        }
+
+        if (parent.childNodes.length === 0) {
+            parent.remove();
+        }
+    }
+
+    function ensurePageBreakAround(img) {
+
+        const container = getImagePageContainer(img);
+        const before = container.previousElementSibling;
+        const after = container.nextElementSibling;
+
+        const isPageBreak = element =>
+            element &&
+            element.tagName === 'HR' &&
+            element.classList.contains('page-break');
+
+        if (!isPageBreak(before)) {
+
+            const pageBreak = document.createElement('hr');
+            pageBreak.className = 'page-break';
+            container.parentNode.insertBefore(pageBreak, container);
+        }
+
+        if (!isPageBreak(after)) {
+
+            const pageBreak = document.createElement('hr');
+            pageBreak.className = 'page-break';
+            container.parentNode.insertBefore(pageBreak, container.nextSibling);
+        }
+    }
+
+    function removePageBreaksAround(img) {
+
+        const container = getImagePageContainer(img);
+        const before = container.previousElementSibling;
+        const after = container.nextElementSibling;
+
+        const isPageBreak = element =>
+            element &&
+            element.tagName === 'HR' &&
+            element.classList.contains('page-break');
+
+        if (isPageBreak(before)) {
+            before.remove();
+        }
+
+        if (isPageBreak(after)) {
+            after.remove();
+        }
+    }
+
+    function updateImageFullPageButton() {
+
+        if (!fullPageImageBtn) {
+            return;
+        }
+
+        fullPageImageBtn.classList.toggle(
+            'active',
+            !!selectedImageEl &&
+            selectedImageEl.dataset.fullPage === '1'
+        );
+    }
+
+    function setImageFullPage(enabled) {
+
+        if (!selectedImageEl) {
+            return;
+        }
+
+        const img = selectedImageEl;
+
+        if (enabled) {
+
+            if (!fullPageImagesState.has(img)) {
+
+                fullPageImagesState.set(img, {
+                    width: img.style.width,
+                    height: img.style.height,
+                    maxWidth: img.style.maxWidth,
+                    margin: img.style.margin,
+                    marginLeft: img.style.marginLeft,
+                    marginRight: img.style.marginRight,
+                    objectFit: img.style.objectFit
+                });
+            }
+
+            detachImageFromParagraph(img);
+            ensurePageBreakAround(img);
+
+            img.dataset.fullPage = '1';
+
+            img.style.width = '100%';
+            img.style.height = '850px';
+            img.style.maxWidth = '100%';
+            img.style.margin = '0';
+            img.style.objectFit = 'contain';
+
+        } else {
+
+            const originals = fullPageImagesState.get(img);
+
+            if (originals) {
+
+                img.style.width = originals.width;
+                img.style.height = originals.height;
+                img.style.maxWidth = originals.maxWidth;
+                img.style.margin = originals.margin;
+                img.style.marginLeft = originals.marginLeft;
+                img.style.marginRight = originals.marginRight;
+                img.style.objectFit = originals.objectFit;
+
+                fullPageImagesState.delete(img);
+
+            } else {
+
+                img.style.removeProperty('width');
+                img.style.removeProperty('height');
+                img.style.removeProperty('max-width');
+                img.style.removeProperty('margin');
+                img.style.removeProperty('margin-left');
+                img.style.removeProperty('margin-right');
+                img.style.removeProperty('object-fit');
+            }
+
+            img.removeAttribute('data-full-page');
+
+            removePageBreaksAround(img);
+        }
+
+        syncImageControlsFromSelection();
+
+        syncOutput();
     }
 
     /* =========================================================
@@ -4636,6 +4933,9 @@ ${cleanHTML()}
 
         // Toolbar de propriedades da imagem (largura, alinhamento, excluir).
         setupImageToolbar();
+
+        // Visualização em tela cheia da imagem selecionada.
+        setupImageFullscreen();
 
 
         // Divisor.
