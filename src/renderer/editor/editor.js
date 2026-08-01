@@ -3939,6 +3939,22 @@
             return;
         }
 
+        // Só exibe (e só gera o arquivo em memória) se o usuário ativou
+        // o toggle "Tamanho do arquivo de exportação" nas Configurações.
+        let sizeEstimateEnabled = false;
+
+        try {
+            sizeEstimateEnabled =
+                localStorage.getItem('ebook-editor-show-size-estimate') === '1';
+        } catch (error) {
+            console.error('Não foi possível ler a preferência de tamanho do arquivo:', error);
+        }
+
+        if (!sizeEstimateEnabled) {
+            exportSizeLabelEl.textContent = '';
+            return;
+        }
+
         // Não deixa duas estimativas rodarem ao mesmo tempo (a de PDF,
         // principalmente, cria uma janela oculta para imprimir).
         if (sizeEstimateBusy) {
