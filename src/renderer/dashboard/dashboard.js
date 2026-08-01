@@ -37,6 +37,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Tema (claro/escuro)
     const themeToggle = document.getElementById('themeToggle');
     const themeStatusLabel = document.getElementById('themeStatusLabel');
+    const sizeEstimateToggle = document.getElementById('sizeEstimateToggle');
+    const sizeEstimateStatusLabel = document.getElementById('sizeEstimateStatusLabel');
 
     // Campos de "Sobre o aplicativo" / créditos, preenchidos a partir do package.json
     const settingsAppName = document.getElementById('settingsAppName');
@@ -315,6 +317,52 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     loadSavedTheme();
+
+    // ---------- Tamanho estimado do arquivo de exportação ----------
+
+    const SIZE_ESTIMATE_STORAGE_KEY = 'ebook-editor-show-size-estimate';
+
+    function applySizeEstimatePreference(enabled) {
+
+        if (sizeEstimateToggle) {
+            sizeEstimateToggle.checked = enabled;
+        }
+
+        if (sizeEstimateStatusLabel) {
+            sizeEstimateStatusLabel.textContent = enabled ? 'Ativado' : 'Desativado';
+        }
+    }
+
+    function loadSavedSizeEstimatePreference() {
+
+        let enabled = false;
+
+        try {
+            enabled = localStorage.getItem(SIZE_ESTIMATE_STORAGE_KEY) === '1';
+        } catch (error) {
+            console.error('Não foi possível ler a preferência de tamanho do arquivo:', error);
+        }
+
+        applySizeEstimatePreference(enabled);
+    }
+
+    if (sizeEstimateToggle) {
+
+        sizeEstimateToggle.addEventListener('change', () => {
+
+            const enabled = sizeEstimateToggle.checked;
+
+            applySizeEstimatePreference(enabled);
+
+            try {
+                localStorage.setItem(SIZE_ESTIMATE_STORAGE_KEY, enabled ? '1' : '0');
+            } catch (error) {
+                console.error('Não foi possível salvar a preferência de tamanho do arquivo:', error);
+            }
+        });
+    }
+
+    loadSavedSizeEstimatePreference();
 
     // ---------- Informações do app (via package.json) ----------
 

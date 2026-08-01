@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     listarProjetos: () => ipcRenderer.invoke('listar-projetos'),
     carregarProjeto: (projectPath) => ipcRenderer.invoke('carregar-projeto', projectPath),
     listarImagens: (projectPath) => ipcRenderer.invoke('listar-imagens', projectPath),
+    verificarUsoImagens: (dados) => ipcRenderer.invoke('verificar-uso-imagens', dados),
     lerCSS: (dados) => ipcRenderer.invoke('ler-css', dados),
     salvarCSS: (dados) => ipcRenderer.invoke('salvar-css', dados),
     // Aceita tanto uma string (caminho do projeto, formato clássico)
@@ -39,5 +40,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     listarFontes: (projectPath) => ipcRenderer.invoke('listar-fontes', projectPath),
     listarFontesBase: () => ipcRenderer.invoke('listar-fontes-base'),
     importarFonte: (projectPath) => ipcRenderer.invoke('importar-fonte', projectPath),
+    estimarTamanhoExportacao: (dados) => ipcRenderer.invoke('estimar-tamanho-exportacao', dados),
     exportarProjeto: (dados) => ipcRenderer.invoke('exportar-projeto', dados)
 });

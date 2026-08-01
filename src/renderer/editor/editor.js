@@ -38,7 +38,24 @@
 
     const divider = document.getElementById('divider');
     const editorPane = document.getElementById('editorPane');
+    const pageEl = document.querySelector('.page');
     const workspace = document.querySelector('.workspace');
+    const sidebar = document.getElementById('sidebar');
+    const sidebarDivider = document.getElementById('sidebarDivider');
+    const sectionsDivider = document.getElementById('sectionsDivider');
+
+    const textToolbar = document.getElementById('textToolbar');
+    const imageToolbar = document.getElementById('imageToolbar');
+    const imageWidthSelect = document.getElementById('imageWidthSelect');
+    const deleteImageFromDocBtn = document.getElementById('deleteImageFromDocBtn');
+    const fullscreenImageBtn = document.getElementById('fullscreenImageBtn');
+    const fullPageImageBtn = document.getElementById('fullPageImageBtn');
+    const imageFullscreenOverlay = document.getElementById('imageFullscreenOverlay');
+    const imageFullscreenImg = document.getElementById('imageFullscreenImg');
+    const imageFullscreenCloseBtn = document.getElementById('imageFullscreenCloseBtn');
+    const imageAlignBtns = Array.from(
+        document.querySelectorAll('.image-align-btn')
+    );
 
     const blockStyle = document.getElementById('blockStyle');
 
@@ -61,6 +78,8 @@
 
     const zoomButtons = document.querySelectorAll('.zoom-btn');
     const zoomTrack = document.querySelector('.zoom-track span');
+    const zoomValueEl = document.getElementById('zoomValue');
+    const exportSizeLabelEl = document.getElementById('exportSizeLabel');
 
     const chapterListEl = document.getElementById('chapterList');
     const addChapterBtn = document.getElementById('addChapterBtn');
@@ -86,6 +105,19 @@
 
     let isDragging = false;
 
+    // Indica qual divisor está sendo arrastado (o da direita, entre o
+    // editor e o painel de código, ou o da esquerda, da barra lateral).
+    let draggingSidebarDivider = false;
+
+    // Divisor interno da barra lateral, entre Capítulos e Imagens:
+    // arrastá-lo verticalmente redimensiona a altura da lista de imagens.
+    let draggingSectionsDivider = false;
+
+    // Imagem selecionada dentro do documento (painel "Documento"). Enquanto
+    // uma imagem está selecionada, a toolbar de texto é substituída pela
+    // toolbar de propriedades da imagem (largura, alinhamento, excluir).
+    let selectedImageEl = null;
+
     let currentZoom = 100;
 
     let saveTimeout = null;
@@ -110,6 +142,11 @@
     let selectedImageId = null;
     let cssSaveTimeout = null;
     let knownImages = [];
+
+    // Mapa { idDaImagem: boolean } preenchido pelo main process: diz se
+    // cada imagem está sendo usada em algum capítulo ou folha de estilo.
+    // Usado para marcar com um ícone vermelho as imagens não usadas.
+    let imageUsage = {};
 
     // Edição direta do XHTML no painel "Código gerado". Enquanto
     // isEditingCode for true, o clique fora do bloco de código (e fora
@@ -382,6 +419,8 @@
             // Ao trocar/criar/excluir capítulo é um bom momento para gravar
             // no disco imediatamente (sem esperar o debounce do autosave)
             persistChapter(chapter);
+
+            refreshImagesUsage();
         }
     }
 
@@ -427,6 +466,7 @@
             if (chapter) {
                 chapter.html = cleanHTML();
                 persistChapter(chapter);
+                refreshImagesUsage();
             }
 
         }, 800);
@@ -482,6 +522,8 @@
 
         editor.innerHTML = chapter ? relativeToAbsoluteImages(chapter.html) : '';
 
+        deselectImage();
+
         syncOutput();
 
         renderChapterList();
@@ -507,6 +549,8 @@
         activeChapterId = newChapter.id;
 
         editor.innerHTML = newChapter.html;
+
+        deselectImage();
 
         syncOutput();
 
@@ -542,6 +586,8 @@
             activeChapterId = chapters[nextIndex].id;
 
             editor.innerHTML = relativeToAbsoluteImages(chapters[nextIndex].html);
+
+            deselectImage();
 
             syncOutput();
 
@@ -875,6 +921,23 @@
 
             item.appendChild(thumb);
 
+            // Imagem sem nenhum uso no projeto ganha um ícone vermelho
+            // no canto para o usuário saber que pode excluí-la.
+            if (imageUsage[imageInfo.id] === false) {
+
+                item.classList.add('unused');
+                item.title = (imageInfo.originalName || '') +
+                    ' — imagem não usada em nenhum capítulo nem CSS';
+
+                const badge = document.createElement('span');
+
+                badge.className = 'image-unused-badge';
+                badge.textContent = '!';
+                badge.title = 'Imagem não usada em nenhum capítulo nem CSS';
+
+                item.appendChild(badge);
+            }
+
             item.addEventListener('click', () => {
 
                 // Clicar de novo na imagem já selecionada volta para a
@@ -900,6 +963,34 @@
         const result = await window.electronAPI.listarImagens(projectPath);
 
         knownImages = (result && result.success) ? (result.images || []) : [];
+
+        renderImageStyleList();
+
+        refreshImagesUsage();
+    }
+
+    // Pede ao main process para verificar, em todo o projeto (capítulos
+    // e CSS), quais imagens não estão sendo usadas. O capítulo ativo é
+    // "limpo" antes (mesmo HTML que o autosave gravaria) para que uma
+    // imagem recém-inserida já conte como usada imediatamente.
+    async function refreshImagesUsage() {
+
+        if (!projectPath || !window.electronAPI || !window.electronAPI.verificarUsoImagens) {
+            return;
+        }
+
+        const activeChapter = getActiveChapter();
+
+        if (activeChapter) {
+            activeChapter.html = cleanHTML();
+        }
+
+        const result = await window.electronAPI.verificarUsoImagens({
+            projectPath,
+            chaptersHtml: chapters.map(chapter => chapter.html)
+        });
+
+        imageUsage = (result && result.success) ? (result.usage || {}) : {};
 
         renderImageStyleList();
     }
@@ -1020,6 +1111,9 @@
         selectImageForCss(null);
 
         closeDeleteImageModal();
+
+        // Remover o arquivo muda o tamanho do arquivo final.
+        scheduleSizeEstimate(300);
     }
 
 
@@ -1094,6 +1188,13 @@
                 if (!result || !result.success) {
                     console.error('Erro ao salvar CSS:', result && result.error);
                 }
+
+                // CSS pode referenciar imagens (ex: background-image);
+                // reavalia o uso para o ícone vermelho refletir isso.
+                refreshImagesUsage();
+
+                // CSS entra no arquivo final; atualiza o tamanho estimado.
+                scheduleSizeEstimate(600);
             });
 
         }, 600);
@@ -1167,6 +1268,12 @@
             node.parentNode.replaceChild(p, node);
             p.appendChild(node);
         }
+
+        // Remove a classe de seleção (só visual, usada no editor) para
+        // ela não ir parar no XHTML salvo/exportado.
+        container.querySelectorAll('.image-selected').forEach(img => {
+            img.classList.remove('image-selected');
+        });
 
         html = container.innerHTML;
 
@@ -1694,6 +1801,10 @@
         if (searchControl && !searchControl.hidden) {
             refreshSearchHighlights();
         }
+
+        // Depois que o usuário para de digitar, atualiza o tamanho
+        // aproximado do arquivo de exportação na barra de status.
+        scheduleSizeEstimate(1200);
     }
 
 
@@ -1846,6 +1957,8 @@
 
         const imagesDirUrl = getProjectImagesDirUrl();
 
+        let lastInsertedImage = null;
+
         result.images.forEach(imageInfo => {
 
             const image =
@@ -1865,7 +1978,15 @@
             image.dataset.imgId = imageInfo.id;
 
             insertNodeAtCursor(image);
+
+            lastInsertedImage = image;
         });
+
+        // Seleciona a última imagem inserida para a toolbar de
+        // propriedades de imagem já aparecer (como no Google Docs).
+        if (lastInsertedImage) {
+            selectImage(lastInsertedImage);
+        }
 
         // Atualiza a lista do painel lateral de CSS por imagem, para as
         // imagens recém-adicionadas aparecerem lá imediatamente.
@@ -1979,6 +2100,573 @@
         });
     }
 
+
+    /* =========================================================
+       14-C. SELEÇÃO E PROPRIEDADES DE IMAGEM
+       -------------------------------------------------------
+       Clicar numa imagem dentro do documento a seleciona e troca
+       a toolbar de texto pela toolbar de propriedades da imagem
+       (largura, alinhamento e remoção), no estilo do Google Docs.
+       Clicar fora da imagem (ou em qualquer texto) desfaz a
+       seleção e devolve a toolbar de texto.
+    ========================================================= */
+
+    function selectImage(img) {
+
+        if (!img || img.tagName !== 'IMG') {
+            return;
+        }
+
+        deselectImage();
+
+        selectedImageEl = img;
+
+        img.classList.add('image-selected');
+
+        if (textToolbar) {
+            textToolbar.hidden = true;
+        }
+
+        if (imageToolbar) {
+            imageToolbar.hidden = false;
+        }
+
+        syncImageControlsFromSelection();
+    }
+
+    function deselectImage() {
+
+        if (selectedImageEl) {
+            selectedImageEl.classList.remove('image-selected');
+            selectedImageEl = null;
+        }
+
+        // Descarta estados de imagens que saíram do documento (troca de
+        // capítulo recria o DOM, deixando referências antigas no Map).
+        for (const img of fullPageImagesState.keys()) {
+            if (!img.isConnected) {
+                fullPageImagesState.delete(img);
+            }
+        }
+
+        if (textToolbar) {
+            textToolbar.hidden = false;
+        }
+
+        if (imageToolbar) {
+            imageToolbar.hidden = true;
+        }
+    }
+
+    function getImageAlignment(img) {
+
+        // Só considera os estilos inline, que são os que a toolbar
+        // aplica. Sem estilo inline, vale o padrão do CSS (centralizada).
+        const marginLeft = img.style.marginLeft;
+        const marginRight = img.style.marginRight;
+
+        if (marginLeft === '0' || marginLeft === '0px') {
+            return 'left';
+        }
+
+        if (marginRight === '0' || marginRight === '0px') {
+            return 'right';
+        }
+
+        return 'center';
+    }
+
+    function updateImageAlignButtons(align) {
+
+        imageAlignBtns.forEach(btn => {
+            btn.classList.toggle(
+                'active',
+                btn.dataset.imageAlign === align
+            );
+        });
+    }
+
+    function applyImageAlignment(img, align) {
+
+        if (align === 'left') {
+            img.style.marginLeft = '0';
+            img.style.marginRight = 'auto';
+        } else if (align === 'right') {
+            img.style.marginLeft = 'auto';
+            img.style.marginRight = '0';
+        } else {
+            img.style.marginLeft = 'auto';
+            img.style.marginRight = 'auto';
+        }
+    }
+
+    function applyImageWidth(img, percent) {
+
+        if (percent) {
+            img.style.width = percent + '%';
+            img.style.maxWidth = '100%';
+        } else {
+            img.style.removeProperty('width');
+        }
+    }
+
+    function syncImageControlsFromSelection() {
+
+        if (!selectedImageEl || !imageWidthSelect) {
+            return;
+        }
+
+        const isFullPage = selectedImageEl.dataset.fullPage === '1';
+
+        // Em página inteira o tamanho é fixo; desabilita o seletor de largura.
+        imageWidthSelect.disabled = isFullPage;
+
+        const width = Math.round(
+            parseFloat(selectedImageEl.style.width)
+        );
+
+        if (!(width > 0)) {
+            imageWidthSelect.value = '';
+            updateImageAlignButtons(
+                getImageAlignment(selectedImageEl)
+            );
+            updateImageFullPageButton();
+            return;
+        }
+
+        let matched = false;
+
+        for (const option of imageWidthSelect.options) {
+            if (parseInt(option.value, 10) === width) {
+                imageWidthSelect.value = option.value;
+                matched = true;
+                break;
+            }
+        }
+
+        if (!matched) {
+            imageWidthSelect.value = '65';
+        }
+
+        updateImageAlignButtons(
+            getImageAlignment(selectedImageEl)
+        );
+
+        updateImageFullPageButton();
+    }
+
+    function setupImageSelection() {
+
+        if (!editor) {
+            return;
+        }
+
+        editor.addEventListener('mousedown', event => {
+
+            if (event.target && event.target.tagName === 'IMG') {
+
+                // Não deixa o contenteditable iniciar uma seleção de
+                // texto em cima da imagem: apenas seleciona a imagem.
+                event.preventDefault();
+
+                selectImage(event.target);
+
+                return;
+            }
+
+            deselectImage();
+        });
+
+        // Clicar fora do editor (e fora da toolbar de imagem) desfaz
+        // a seleção da imagem.
+        document.addEventListener('mousedown', event => {
+
+            if (!selectedImageEl) {
+                return;
+            }
+
+            const insideEditor = editor.contains(event.target);
+            const insideImageToolbar = imageToolbar &&
+                imageToolbar.contains(event.target);
+            const insideFullscreen = imageFullscreenOverlay &&
+                imageFullscreenOverlay.contains(event.target);
+
+            if (!insideEditor && !insideImageToolbar && !insideFullscreen) {
+                deselectImage();
+            }
+        });
+
+        editor.addEventListener('keydown', event => {
+
+            if (!selectedImageEl) {
+                return;
+            }
+
+            if (event.key === 'Escape') {
+
+                event.preventDefault();
+
+                deselectImage();
+
+            } else if (
+                event.key === 'Delete' ||
+                event.key === 'Backspace'
+            ) {
+
+                // Assim como no Google Docs, Del/Backspace com a imagem
+                // selecionada remove a imagem do documento.
+                event.preventDefault();
+
+                const img = selectedImageEl;
+
+                deselectImage();
+
+                img.remove();
+
+                syncOutput();
+
+            } else if (
+                event.key.length === 1 &&
+                !event.ctrlKey &&
+                !event.metaKey
+            ) {
+
+                // Digitar texto com a imagem selecionada devolve a
+                // toolbar de texto (o cursor fica onde estava).
+                deselectImage();
+            }
+        });
+    }
+
+    function setupImageToolbar() {
+
+        if (imageWidthSelect) {
+
+            imageWidthSelect.addEventListener('change', () => {
+
+                if (!selectedImageEl) {
+                    return;
+                }
+
+                applyImageWidth(
+                    selectedImageEl,
+                    parseInt(imageWidthSelect.value, 10)
+                );
+
+                syncOutput();
+            });
+        }
+
+        imageAlignBtns.forEach(btn => {
+
+            btn.addEventListener('click', () => {
+
+                if (!selectedImageEl) {
+                    return;
+                }
+
+                const align = btn.dataset.imageAlign;
+
+                applyImageAlignment(selectedImageEl, align);
+
+                updateImageAlignButtons(align);
+
+                syncOutput();
+            });
+        });
+
+        if (deleteImageFromDocBtn) {
+
+            deleteImageFromDocBtn.addEventListener('click', () => {
+
+                if (!selectedImageEl) {
+                    return;
+                }
+
+                const img = selectedImageEl;
+
+                deselectImage();
+
+                img.remove();
+
+                syncOutput();
+            });
+        }
+
+        if (fullPageImageBtn) {
+
+            fullPageImageBtn.addEventListener('click', () => {
+
+                if (!selectedImageEl) {
+                    return;
+                }
+
+                setImageFullPage(
+                    selectedImageEl.dataset.fullPage !== '1'
+                );
+            });
+        }
+    }
+
+    function setupImageFullscreen() {
+
+        if (!fullscreenImageBtn || !imageFullscreenOverlay || !imageFullscreenImg) {
+            return;
+        }
+
+        const openImageFullscreen = () => {
+
+            if (!selectedImageEl) {
+                return;
+            }
+
+            imageFullscreenImg.src =
+                selectedImageEl.currentSrc || selectedImageEl.src;
+
+            imageFullscreenImg.alt =
+                selectedImageEl.alt || '';
+
+            imageFullscreenOverlay.hidden = false;
+        };
+
+        const closeImageFullscreen = () => {
+
+            imageFullscreenOverlay.hidden = true;
+
+            imageFullscreenImg.removeAttribute('src');
+        };
+
+        fullscreenImageBtn.addEventListener(
+            'click',
+            openImageFullscreen
+        );
+
+        if (imageFullscreenCloseBtn) {
+
+            imageFullscreenCloseBtn.addEventListener(
+                'click',
+                closeImageFullscreen
+            );
+        }
+
+        // Clicar fora da imagem (ou na própria imagem) fecha a tela cheia.
+        imageFullscreenOverlay.addEventListener('click', event => {
+
+            if (
+                event.target === imageFullscreenOverlay ||
+                event.target === imageFullscreenImg
+            ) {
+                closeImageFullscreen();
+            }
+        });
+
+        document.addEventListener('keydown', event => {
+
+            if (
+                event.key === 'Escape' &&
+                !imageFullscreenOverlay.hidden
+            ) {
+                closeImageFullscreen();
+            }
+        });
+    }
+
+    /* =========================================================
+       14-D. IMAGEM EM PÁGINA INTEIRA
+       -------------------------------------------------------
+       O botão de página inteira faz a imagem ocupar uma página
+       inteira do documento: ganha quebras de página antes e
+       depois e é exibida no tamanho da página. Clicar de novo
+       desfaz, restaurando o tamanho/alinhamento anteriores.
+    ========================================================= */
+
+    // Guarda os estilos inline originais das imagens em modo página
+    // inteira, para restaurá-los ao desfazer o modo.
+    const fullPageImagesState = new Map();
+
+    function getImagePageContainer(img) {
+
+        // Depois de salvar/recarregar, o cleanHTML pode re-envolver a
+        // imagem num <p>; nesse caso as quebras de página ficam ao redor
+        // do <p>, não da imagem.
+        const parent = img.parentNode;
+
+        return parent && parent.tagName === 'P' ? parent : img;
+    }
+
+    function detachImageFromParagraph(img) {
+
+        const parent = img.parentNode;
+
+        if (!parent || parent === editor || parent.tagName !== 'P') {
+            return;
+        }
+
+        const beforeNodes = [];
+        const afterNodes = [];
+        let seenImage = false;
+
+        for (const child of Array.from(parent.childNodes)) {
+            if (child === img) {
+                seenImage = true;
+                continue;
+            }
+
+            if (seenImage) {
+                afterNodes.push(child);
+            } else {
+                beforeNodes.push(child);
+            }
+        }
+
+        if (beforeNodes.length > 0) {
+            const paragraph = document.createElement('p');
+            beforeNodes.forEach(node => paragraph.appendChild(node));
+            parent.parentNode.insertBefore(paragraph, parent);
+        }
+
+        parent.parentNode.insertBefore(img, parent);
+
+        if (afterNodes.length > 0) {
+            const paragraph = document.createElement('p');
+            afterNodes.forEach(node => paragraph.appendChild(node));
+            parent.parentNode.insertBefore(paragraph, img.nextSibling);
+        }
+
+        if (parent.childNodes.length === 0) {
+            parent.remove();
+        }
+    }
+
+    function ensurePageBreakAround(img) {
+
+        const container = getImagePageContainer(img);
+        const before = container.previousElementSibling;
+        const after = container.nextElementSibling;
+
+        const isPageBreak = element =>
+            element &&
+            element.tagName === 'HR' &&
+            element.classList.contains('page-break');
+
+        if (!isPageBreak(before)) {
+
+            const pageBreak = document.createElement('hr');
+            pageBreak.className = 'page-break';
+            container.parentNode.insertBefore(pageBreak, container);
+        }
+
+        if (!isPageBreak(after)) {
+
+            const pageBreak = document.createElement('hr');
+            pageBreak.className = 'page-break';
+            container.parentNode.insertBefore(pageBreak, container.nextSibling);
+        }
+    }
+
+    function removePageBreaksAround(img) {
+
+        const container = getImagePageContainer(img);
+        const before = container.previousElementSibling;
+        const after = container.nextElementSibling;
+
+        const isPageBreak = element =>
+            element &&
+            element.tagName === 'HR' &&
+            element.classList.contains('page-break');
+
+        if (isPageBreak(before)) {
+            before.remove();
+        }
+
+        if (isPageBreak(after)) {
+            after.remove();
+        }
+    }
+
+    function updateImageFullPageButton() {
+
+        if (!fullPageImageBtn) {
+            return;
+        }
+
+        fullPageImageBtn.classList.toggle(
+            'active',
+            !!selectedImageEl &&
+            selectedImageEl.dataset.fullPage === '1'
+        );
+    }
+
+    function setImageFullPage(enabled) {
+
+        if (!selectedImageEl) {
+            return;
+        }
+
+        const img = selectedImageEl;
+
+        if (enabled) {
+
+            if (!fullPageImagesState.has(img)) {
+
+                fullPageImagesState.set(img, {
+                    width: img.style.width,
+                    height: img.style.height,
+                    maxWidth: img.style.maxWidth,
+                    margin: img.style.margin,
+                    marginLeft: img.style.marginLeft,
+                    marginRight: img.style.marginRight,
+                    objectFit: img.style.objectFit
+                });
+            }
+
+            detachImageFromParagraph(img);
+            ensurePageBreakAround(img);
+
+            img.dataset.fullPage = '1';
+
+            img.style.width = '100%';
+            img.style.height = '850px';
+            img.style.maxWidth = '100%';
+            img.style.margin = '0';
+            img.style.objectFit = 'contain';
+
+        } else {
+
+            const originals = fullPageImagesState.get(img);
+
+            if (originals) {
+
+                img.style.width = originals.width;
+                img.style.height = originals.height;
+                img.style.maxWidth = originals.maxWidth;
+                img.style.margin = originals.margin;
+                img.style.marginLeft = originals.marginLeft;
+                img.style.marginRight = originals.marginRight;
+                img.style.objectFit = originals.objectFit;
+
+                fullPageImagesState.delete(img);
+
+            } else {
+
+                img.style.removeProperty('width');
+                img.style.removeProperty('height');
+                img.style.removeProperty('max-width');
+                img.style.removeProperty('margin');
+                img.style.removeProperty('margin-left');
+                img.style.removeProperty('margin-right');
+                img.style.removeProperty('object-fit');
+            }
+
+            img.removeAttribute('data-full-page');
+
+            removePageBreaksAround(img);
+        }
+
+        syncImageControlsFromSelection();
+
+        syncOutput();
+    }
 
     /* =========================================================
        15. INSERIR ELEMENTO NO CURSOR
@@ -3198,6 +3886,8 @@
 
         editor.innerHTML = relativeToAbsoluteImages(editedHtml);
 
+        deselectImage();
+
         exitCodeEditMode();
 
         syncOutput();
@@ -3336,6 +4026,9 @@
                 );
             });
         }
+
+        // O tamanho exibido na barra de status é do formato recém-selecionado.
+        updateExportSizeEstimate();
     }
 
 
@@ -3406,12 +4099,19 @@
 
     function updateZoom() {
 
-        if (!editor) {
+        if (!pageEl) {
             return;
         }
 
-        editor.style.zoom =
+        // O zoom redimensiona o visualizador inteiro (a folha/página),
+        // não só o texto: página, texto e imagens crescem juntos, como
+        // no zoom de um leitor de PDF.
+        pageEl.style.zoom =
             `${currentZoom}%`;
+
+        if (zoomValueEl) {
+            zoomValueEl.textContent = `${currentZoom}%`;
+        }
 
         if (zoomTrack) {
 
@@ -3475,6 +4175,123 @@
         );
 
         updateZoom();
+    }
+
+
+    /* =========================================================
+       32-B. TAMANHO APROXIMADO DA EXPORTAÇÃO
+       -------------------------------------------------------
+       Exibe na barra de status o tamanho aproximado do arquivo
+       final (.epub ou .pdf, conforme o formato selecionado no
+       dropdown de exportação). O main process gera o arquivo em
+       memória e devolve o tamanho em bytes.
+    ========================================================= */
+
+    let sizeEstimateTimeout = null;
+    let sizeEstimateBusy = false;
+    let sizeEstimatePending = false;
+
+    function formatFileSize(bytes) {
+
+        if (!bytes && bytes !== 0) {
+            return '—';
+        }
+
+        if (bytes < 1024) {
+            return bytes + ' B';
+        }
+
+        if (bytes < 1024 * 1024) {
+            return (bytes / 1024).toFixed(1).replace('.', ',') + ' KB';
+        }
+
+        return (bytes / (1024 * 1024)).toFixed(2).replace('.', ',') + ' MB';
+    }
+
+    // Agenda a atualização para depois que o usuário para de digitar;
+    // nesse momento o autosave (800ms) já gravou o conteúdo no disco.
+    function scheduleSizeEstimate(delay) {
+
+        clearTimeout(sizeEstimateTimeout);
+
+        sizeEstimateTimeout = setTimeout(
+            updateExportSizeEstimate,
+            delay
+        );
+    }
+
+    async function updateExportSizeEstimate() {
+
+        if (
+            !projectPath ||
+            !exportSizeLabelEl ||
+            !window.electronAPI ||
+            !window.electronAPI.estimarTamanhoExportacao
+        ) {
+
+            if (exportSizeLabelEl) {
+                exportSizeLabelEl.textContent = '';
+            }
+
+            return;
+        }
+
+        // Só exibe (e só gera o arquivo em memória) se o usuário ativou
+        // o toggle "Tamanho do arquivo de exportação" nas Configurações.
+        let sizeEstimateEnabled = false;
+
+        try {
+            sizeEstimateEnabled =
+                localStorage.getItem('ebook-editor-show-size-estimate') === '1';
+        } catch (error) {
+            console.error('Não foi possível ler a preferência de tamanho do arquivo:', error);
+        }
+
+        if (!sizeEstimateEnabled) {
+            exportSizeLabelEl.textContent = '';
+            return;
+        }
+
+        // Não deixa duas estimativas rodarem ao mesmo tempo (a de PDF,
+        // principalmente, cria uma janela oculta para imprimir).
+        if (sizeEstimateBusy) {
+            sizeEstimatePending = true;
+            return;
+        }
+
+        sizeEstimateBusy = true;
+
+        try {
+
+            const result = await window.electronAPI.estimarTamanhoExportacao({
+                projectPath,
+                format: exportFormat
+            });
+
+            if (exportSizeLabelEl) {
+
+                if (result && result.success) {
+
+                    exportSizeLabelEl.textContent =
+                        exportFormat.toUpperCase() +
+                        ' ≈ ' +
+                        formatFileSize(result.bytes);
+
+                } else {
+
+                    exportSizeLabelEl.textContent = '';
+                }
+            }
+
+        } finally {
+
+            sizeEstimateBusy = false;
+
+            if (sizeEstimatePending) {
+                sizeEstimatePending = false;
+                updateExportSizeEstimate();
+            }
+        }
     }
 
 
@@ -3559,6 +4376,7 @@ ${cleanHTML()}
             () => {
 
                 isDragging = true;
+                draggingSidebarDivider = false;
 
                 divider.classList.add(
                     'dragging'
@@ -3574,7 +4392,7 @@ ${cleanHTML()}
             'mousemove',
             event => {
 
-                if (!isDragging) {
+                if (!isDragging || draggingSidebarDivider || draggingSectionsDivider) {
                     return;
                 }
 
@@ -3611,6 +4429,182 @@ ${cleanHTML()}
                 isDragging = false;
 
                 divider.classList.remove(
+                    'dragging'
+                );
+
+                document.body.style.userSelect =
+                    '';
+            }
+        );
+    }
+
+    /* =========================================================
+       34-B. DIVISOR ARRASTÁVEL DA BARRA LATERAL
+       -------------------------------------------------------
+       Mesmo comportamento do divisor da direita, mas aplicado à
+       barra lateral de capítulos/imagens. Quanto mais larga a
+       barra, maiores ficam as miniaturas de imagem do painel
+       "Imagens" (o tamanho delas acompanha o contêiner via CSS).
+    ========================================================= */
+
+    function setupSidebarDivider() {
+
+        if (!sidebarDivider || !sidebar || !workspace) {
+            return;
+        }
+
+        sidebarDivider.addEventListener(
+            'mousedown',
+            () => {
+
+                isDragging = true;
+                draggingSidebarDivider = true;
+
+                sidebarDivider.classList.add(
+                    'dragging'
+                );
+
+                document.body.style.userSelect =
+                    'none';
+            }
+        );
+
+        window.addEventListener(
+            'mousemove',
+            event => {
+
+                if (!isDragging || !draggingSidebarDivider) {
+                    return;
+                }
+
+                const rect =
+                    workspace.getBoundingClientRect();
+
+                let percentage =
+                    (
+                        (event.clientX - rect.left) /
+                        rect.width
+                    ) * 100;
+
+                percentage =
+                    Math.min(
+                        45,
+                        Math.max(
+                            16,
+                            percentage
+                        )
+                    );
+
+                sidebar.style.flex =
+                    `0 0 ${percentage}%`;
+            }
+        );
+
+        window.addEventListener(
+            'mouseup',
+            () => {
+
+                isDragging = false;
+                draggingSidebarDivider = false;
+
+                sidebarDivider.classList.remove(
+                    'dragging'
+                );
+
+                document.body.style.userSelect =
+                    '';
+            }
+        );
+    }
+
+
+    /* =========================================================
+       34-C. DIVISOR ARRASTÁVEL ENTRE CAPÍTULOS E IMAGENS
+       -------------------------------------------------------
+       A divisória horizontal dentro da barra lateral redimensiona
+       a altura da lista de imagens: arrastar para baixo aumenta,
+       para cima diminui. A lista de capítulos (flex: 1) ocupa o
+       espaço restante.
+    ========================================================= */
+
+    function setupSectionsDivider() {
+
+        if (!sectionsDivider || !imageStyleListEl || !sidebar) {
+            return;
+        }
+
+        const chapterHeader = sidebar.querySelector('.sidebar-header');
+        const imagesHeader = sidebar.querySelectorAll('.sidebar-header')[1];
+        const cssPanel = sidebar.querySelector('.css-editor-panel');
+        const MIN_IMAGES_HEIGHT = 60;
+        const MIN_CHAPTERS_HEIGHT = 40;
+
+        let startY = 0;
+        let startHeight = 0;
+        let maxHeight = 0;
+
+        sectionsDivider.addEventListener(
+            'mousedown',
+            event => {
+
+                isDragging = true;
+                draggingSectionsDivider = true;
+
+                sectionsDivider.classList.add(
+                    'dragging'
+                );
+
+                document.body.style.userSelect =
+                    'none';
+
+                startY = event.clientY;
+                startHeight = imageStyleListEl.offsetHeight;
+
+                // Soma a altura fixa dos demais blocos da barra para o
+                // redimensionamento nunca esconder a lista de capítulos.
+                const fixedHeight =
+                    (chapterHeader ? chapterHeader.offsetHeight : 34) +
+                    (imagesHeader ? imagesHeader.offsetHeight : 34) +
+                    (cssPanel ? cssPanel.offsetHeight : 220) +
+                    MIN_CHAPTERS_HEIGHT;
+
+                maxHeight = Math.max(
+                    MIN_IMAGES_HEIGHT,
+                    sidebar.clientHeight - fixedHeight
+                );
+            }
+        );
+
+        window.addEventListener(
+            'mousemove',
+            event => {
+
+                if (!isDragging || !draggingSectionsDivider) {
+                    return;
+                }
+
+                const newHeight = Math.min(
+                    maxHeight,
+                    Math.max(
+                        MIN_IMAGES_HEIGHT,
+                        startHeight - (event.clientY - startY)
+                    )
+                );
+
+                imageStyleListEl.style.height =
+                    newHeight + 'px';
+            }
+        );
+
+        window.addEventListener(
+            'mouseup',
+            () => {
+
+                isDragging = false;
+                draggingSidebarDivider = false;
+                draggingSectionsDivider = false;
+
+                sectionsDivider.classList.remove(
                     'dragging'
                 );
 
@@ -3811,6 +4805,8 @@ ${cleanHTML()}
 
         editor.innerHTML = relativeToAbsoluteImages(activeChapter ? activeChapter.html : '');
 
+        deselectImage();
+
         if (result.project && result.project.title) {
 
             document.title = result.project.title + ' | Editor de eBook';
@@ -3855,6 +4851,9 @@ ${cleanHTML()}
         // salvo assim que a leitura do disco terminar.
         editor.innerHTML =
             DEFAULT_HTML;
+
+
+        deselectImage();
 
 
         // Eventos do editor.
@@ -3929,9 +4928,26 @@ ${cleanHTML()}
         // Arrastar e soltar imagens direto no editor.
         setupImageDragAndDrop();
 
+        // Seleção de imagem no documento (troca a toolbar de texto).
+        setupImageSelection();
+
+        // Toolbar de propriedades da imagem (largura, alinhamento, excluir).
+        setupImageToolbar();
+
+        // Visualização em tela cheia da imagem selecionada.
+        setupImageFullscreen();
+
 
         // Divisor.
         setupDivider();
+
+
+        // Divisor da barra lateral esquerda.
+        setupSidebarDivider();
+
+
+        // Divisor interno entre Capítulos e Imagens.
+        setupSectionsDivider();
 
 
         // Barra lateral de capítulos.
