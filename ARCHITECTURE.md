@@ -85,9 +85,11 @@ Redireciona para `src/main/app.js`. Mantido propositalmente enxuto — toda a l�
   - `listar-projetos`, `carregar-projeto`, `excluir-projeto`
   - `salvar-capitulo`, `excluir-capitulo`, `listar-capitulos`
   - `selecionar-imagens`, `copiar-imagens`, `listar-imagens`, `excluir-imagem`
+  - `verificar-uso-imagens` — informa quais imagens do projeto não estão sendo usadas em capítulos ou CSS (ícone vermelho no painel de imagens)
   - `ler-css`, `salvar-css`
   - `listar-fontes`, `listar-fontes-base`, `importar-fonte`
   - `exportar-projeto` (EPUB ou PDF)
+  - `estimar-tamanho-exportacao` — gera o arquivo em memória e devolve o tamanho aproximado (barra de status do editor)
   - `obter-info-app`
 - **`services/epub-exporter.js`** — monta a estrutura completa do EPUB (mimetype, META-INF, OEBPS, content.opf, toc.ncx, capítulos XHTML) e compacta em ZIP usando apenas `zlib` nativo do Node — sem dependências externas.
 - **`services/pdf-exporter.js`** — monta um HTML único com CSS embutido e fontes em base64, renderiza em uma `BrowserWindow` oculta e gera o PDF via `webContents.printToPDF()`.
@@ -98,17 +100,22 @@ Redireciona para `src/main/app.js`. Mantido propositalmente enxuto — toda a l�
 Expõe a API via `contextBridge.exposeInMainWorld('electronAPI', { ... })`. Usa `webUtils.getPathForFile()` para obter o caminho real de arquivos selecionados via `<input type="file">` ou drag & drop (necessário em versões recentes do Electron onde `File.path` não está mais disponível no renderer).
 
 ### 4. Renderer — Dashboard (`src/renderer/dashboard/`)
-- **`dashboard.js`** — lida com criação/abertura/edição/exclusão de projetos, preview de capa (drag & drop), seção "Em andamento", toggle de tema (claro/escuro), tela de configurações com dados do package.json.
+- **`dashboard.js`** — lida com criação/abertura/edição/exclusão de projetos, preview de capa (drag & drop), seção "Em andamento", toggle de tema (claro/escuro), tela de configurações com dados do package.json e preferências do editor (ex: exibir o tamanho aproximado do arquivo de exportação na barra de status).
 - **`dashboard.css`** — estilos do dashboard com variáveis CSS para tema claro/escuro.
 
 ### 5. Renderer — Editor (`src/renderer/editor/`)
-- **`editor.html`** — carregado via `fetch()` a partir do dashboard. Contém a estrutura da toolbar, sidebar (capítulos + imagens), painel de código e área de edição.
+- **`editor.html`** — carregado via `fetch()` a partir do dashboard. Contém a estrutura da toolbar de texto e da toolbar de propriedades de imagem, sidebar (capítulos + imagens), painel de código e área de edição.
 - **`editor.js`** — lógica completa do editor:
   - Formatação de texto (negrito, itálico, títulos, listas, etc.)
   - Barra de busca com contagem e navegação
   - Seletor de fonte/tamanho/entrelinha
   - Gerenciamento de capítulos (criar, renomear, reordenar, excluir)
   - Gerenciamento de imagens (inserir, estilizar, excluir)
+  - Seleção de imagem no documento — troca a toolbar de texto pela de propriedades da imagem (largura, alinhamento, remover, tela cheia, página inteira), no estilo do Google Docs
+  - Indicador de imagens não usadas — ícone vermelho nas miniaturas que não aparecem em nenhum capítulo ou folha de estilo
+  - Barra lateral redimensionável — divisor de largura na borda da sidebar (miniaturas crescem junto) e divisor vertical entre Capítulos e Imagens para ajustar a altura da lista de imagens
+  - Zoom do visualizador — redimensiona a folha/página inteira (não apenas o texto), com porcentagem sincronizada na barra de status
+  - Tamanho aproximado do arquivo de exportação na barra de status, exibido quando ativado nas Configurações
   - Painel de código XHTML com edição inline e salvamento
   - Exportação (dropdown EPUB/PDF com seleção de pasta)
   - Indicador de salvamento automático

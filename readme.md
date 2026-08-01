@@ -1,6 +1,6 @@
 # Editor de eBook
 
-**Versão 0.0.3** — Um aplicativo de desktop minimalista para escrever e exportar eBooks em **ePub** e **PDF**, com editor de texto rico, organização de capítulos, geração do `.epub` sem dependências externas de compressão e exportação para PDF com visualização fiel.
+**Versão 0.0.4** — Um aplicativo de desktop minimalista para escrever e exportar eBooks em **ePub** e **PDF**, com editor de texto rico, organização de capítulos, geração do `.epub` sem dependências externas de compressão e exportação para PDF com visualização fiel.
 
 Construído com **Electron**, **HTML**, **CSS** e **JavaScript puro** — sem frameworks de front-end.
 
@@ -29,6 +29,12 @@ A organização de código está documentada em [ARCHITECTURE.md](ARCHITECTURE.m
 - **Busca no texto** — localize palavras no capítulo atual com contagem de ocorrências e navegação entre resultados.
 - **Organização por capítulos** — barra lateral para adicionar, reordenar (drag & drop) e navegar entre capítulos.
 - **Estilização de imagens** — edição de CSS específico por imagem ou global, com pré-visualização do código XHTML gerado.
+- **Seleção de imagens no documento** — clique numa imagem dentro do editor para abrir a toolbar de propriedades (largura, alinhamento, remover, tela cheia e página inteira).
+- **Imagem em tela cheia e em página inteira** — visualize qualquer imagem cobrindo a tela inteira ou transforme-a numa página inteira do documento (com quebras de página), podendo desfazer com um clique.
+- **Indicador de imagens não usadas** — imagens que não aparecem em nenhum capítulo nem CSS recebem um ícone vermelho no painel lateral de imagens.
+- **Barra lateral redimensionável** — arraste a borda da sidebar para ajustar a largura (as miniaturas de imagem crescem junto) e arraste a divisória interna entre Capítulos e Imagens para ajustar a altura da lista de imagens.
+- **Zoom do visualizador** — redimensiona a página inteira do documento (não apenas o texto), com porcentagem sincronizada na barra de status.
+- **Tamanho aproximado do arquivo final** — barra de status exibe o tamanho estimado do EPUB/PDF selecionado, quando ativado nas Configurações.
 - **Tipografia** — seletor de fonte (Inter, Arial, Georgia, Times New Roman) e controle de tamanho e entrelinha, aplicados em tempo real ao editor.
 - **Exportação em dois formatos:**
   - **EPUB** — monta a estrutura `mimetype`, `META-INF/container.xml`, `content.opf` e `toc.ncx` e compacta tudo em um ZIP válido "na mão", sem depender de pacotes como `archiver` ou `jszip`.
@@ -43,7 +49,7 @@ A organização de código está documentada em [ARCHITECTURE.md](ARCHITECTURE.m
 |---|---|
 | **Projetos** | Dashboard inicial com criação/abertura de projetos e lista de projetos em andamento |
 | **Editor** | Editor de texto com toolbar completa, sidebar de capítulos/imagens e painel de código gerado (XHTML) |
-| **Configurações** | Tema, informações e créditos do aplicativo |
+| **Configurações** | Tema, preferências do editor (ex: tamanho estimado do arquivo), informações e créditos do aplicativo |
 
 > Os projetos criados ficam registrados no diretório de dados do usuário (`app.getPath('userData')/projects.json`) e são exibidos na seção "Em andamento" do Dashboard.
 
@@ -69,42 +75,6 @@ Gera um arquivo `.pdf` montando um HTML completo com CSS embutido, fontes inclus
 
 ## Status
 O projeto está em desenvolvimento ativo.
-
-## Histórico de mudanças
-
-### v0.0.3 (jul/2026)
-
-#### Adicionado
-- Exportação para **PDF** (`src/main/services/pdf-exporter.js`)
-- Sistema de **fontes nativas** (Arial, Georgia, Inter, Times New Roman) para renderização nos arquivos exportados
-- **Importação de fontes** externas por projeto
-- **Prevenção de projetos duplicados** — renomeia automaticamente títulos repetidos
-- **Configuração de empacotamento** via Electron Builder (Windows NSIS/portable, Linux AppImage/deb)
-- **Script de verificação de sintaxe** (`scripts/check-syntax.js`)
-- Ícones de build para Windows e Linux (`build/icon.ico`, `build/icon.png`)
-- Registro de projetos (`src/main/services/project-registry.js`) para persistência do dashboard
-
-#### Atualizado
-- **Editor** — barra de busca textual, seletor de fonte/tamanho/entrelinha, dropdown de exportação (EPUB/PDF), edição inline do código XHTML
-- **Dashboard** — seção "Em andamento" com cards de projetos, tela de configurações com dados do app, toggle de tema escuro/claro
-- **IPC handlers** — novos canais: `listar-fontes`, `listar-fontes-base`, `importar-fonte`, `ler-css`, `salvar-css`, `excluir-imagem`, `excluir-capitulo`, `obter-info-app`
-- **Preload.js** — API exposta para todas as novas funcionalidades do IPC
-- **Gerenciamento de imagens** — listagem, exclusão e estilização individual por CSS
-- **Gerenciamento de capítulos** — exclusão individual com confirmação
-- `package.json` — versão 0.0.3, scripts de distribuição, configuração do Electron Builder
-
-#### Corrigido
-- **Erro ao excluir projetos** — validação e feedback visual no dashboard
-- **Tags void no XHTML** — `<img>`, `<br>`, `<hr>` etc. agora são fechadas corretamente para conformidade com XML/EPUB
-- **Entidades HTML nomeadas** — `&nbsp;`, `&mdash;`, `&rdquo;` etc. são convertidas para referências numéricas válidas em XML
-- **Criação de projetos duplicados** — bloqueio de títulos e pastas repetidas
-- **Flash de tema** — script inline no `<head>` aplica o tema antes da primeira pintura
-
-### v0.0.2 (jul/2026)
-- Estrutura inicial do Electron com dashboard e editor
-- Geração manual de `.epub` (ZIP nativo via `zlib`)
-- Gerenciamento básico de capítulos
-- Modo escuro/claro
 
 ## Créditos
 
