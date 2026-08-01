@@ -2,6 +2,7 @@ const path = require('path');
 const fs = require('fs/promises');
 const fsSync = require('fs');
 const zlib = require('zlib');
+const packageJson = require('../../../package.json');
 const { closeVoidTags, sanitizeEntitiesForXml, sanitizeFolderName, writeJSON } = require('../utils/files');
 
 /* =========================================================
@@ -570,6 +571,7 @@ ${bodyHtml}
         language,
         description,
         cover: coverFileName,
+        appVersion: packageJson.version || '',
         createdAt: new Date().toISOString(),
         chapters: chapterManifest
     };
