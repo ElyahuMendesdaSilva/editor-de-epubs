@@ -40,6 +40,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const sizeEstimateToggle = document.getElementById('sizeEstimateToggle');
     const sizeEstimateStatusLabel = document.getElementById('sizeEstimateStatusLabel');
 
+    // Modo desenvolvedor
+    const devSettingsSection = document.getElementById('devSettingsSection');
+    const devModeStatusLabel = document.getElementById('devModeStatusLabel');
+
     // Campos de "Sobre o aplicativo" / créditos, preenchidos a partir do package.json
     const settingsAppName = document.getElementById('settingsAppName');
     const settingsAppVersion = document.getElementById('settingsAppVersion');
@@ -222,6 +226,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const openSettings = () => {
         if (settingsOverlay) {
             settingsOverlay.classList.add('active');
+            applyDevModeVisibility();
         }
     };
 
@@ -271,6 +276,90 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
+
+    // ---------- Modo desenvolvedor (segure Ctrl + D por 3 segundos) ----------
+
+    const DEV_MODE_STORAGE_KEY = 'ebook-editor-dev-mode';
+    const DEV_MODE_HOLD_MS = 3000;
+
+    function isDevModeEnabled() {
+        try {
+            return localStorage.getItem(DEV_MODE_STORAGE_KEY) === '1';
+        } catch (error) {
+            console.error('Não foi possível ler a preferência do modo desenvolvedor:', error);
+            return false;
+        }
+    }
+
+    function applyDevModeVisibility() {
+        const enabled = isDevModeEnabled();
+
+        if (devSettingsSection) {
+            devSettingsSection.hidden = !enabled;
+        }
+
+        if (devModeStatusLabel) {
+            devModeStatusLabel.textContent = enabled ? 'Ativado' : 'Desativado';
+        }
+    }
+
+    function setDevModeEnabled(enabled) {
+        try {
+            localStorage.setItem(DEV_MODE_STORAGE_KEY, enabled ? '1' : '0');
+        } catch (error) {
+            console.error('Não foi possível salvar a preferência do modo desenvolvedor:', error);
+        }
+
+        applyDevModeVisibility();
+
+        showNotice(
+            'Modo desenvolvedor ' + (enabled ? 'ativado' : 'desativado'),
+            'As opções de desenvolvedor ' + (enabled ? 'agora estão visíveis' : 'foram ocultadas') + ' nas Configurações.'
+        );
+    }
+
+    let ctrlDKeyHeld = false;
+    let ctrlDTimer = null;
+
+    function cancelCtrlDHold() {
+        ctrlDKeyHeld = false;
+
+        if (ctrlDTimer !== null) {
+            clearTimeout(ctrlDTimer);
+            ctrlDTimer = null;
+        }
+    }
+
+    document.addEventListener('keydown', (event) => {
+        if (!event.ctrlKey || (event.key !== 'd' && event.key !== 'D')) {
+            return;
+        }
+
+        // Evita ações padrão (ex.: favoritar no navegador).
+        event.preventDefault();
+
+        if (ctrlDKeyHeld) {
+            return;
+        }
+
+        ctrlDKeyHeld = true;
+        ctrlDTimer = setTimeout(() => {
+            ctrlDTimer = null;
+            setDevModeEnabled(!isDevModeEnabled());
+        }, DEV_MODE_HOLD_MS);
+    });
+
+    document.addEventListener('keyup', (event) => {
+        if (event.key !== 'd' && event.key !== 'D') {
+            return;
+        }
+
+        cancelCtrlDHold();
+    });
+
+    window.addEventListener('blur', cancelCtrlDHold);
+
+    applyDevModeVisibility();
 
     // ---------- Tema (claro / escuro) ----------
 

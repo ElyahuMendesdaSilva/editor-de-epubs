@@ -216,6 +216,10 @@ body {
     max-width: 430px;
 }
 
+#noticeOverlay {
+    z-index: 110;
+}
+
 .notice-icon {
     display: flex;
     align-items: center;
@@ -652,6 +656,13 @@ body {
     text-decoration: underline;
 }
 
+
+.settings-dev-hint {
+    font-size: 0.78rem;
+    color: var(--ink-soft);
+    margin-top: 8px;
+    line-height: 1.5;
+}
 
 /* =========================================
    Estilos específicos do editor.html (toolbar, sidebar, área de edição)

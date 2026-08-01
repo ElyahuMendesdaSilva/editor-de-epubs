@@ -1,6 +1,6 @@
 # Editor de eBook
 
-**Versão 0.0.4** — Um aplicativo de desktop minimalista para escrever e exportar eBooks em **ePub** e **PDF**, com editor de texto rico, organização de capítulos, geração do `.epub` sem dependências externas de compressão e exportação para PDF com visualização fiel.
+**Versão 0.0.5** — Um aplicativo de desktop minimalista para escrever e exportar eBooks em **ePub** e **PDF**, com editor de texto rico, organização de capítulos, geração do `.epub` sem dependências externas de compressão e exportação para PDF com visualização fiel.
 
 Construído com **Electron**, **HTML**, **CSS** e **JavaScript puro** — sem frameworks de front-end.
 
@@ -72,6 +72,23 @@ Gera um arquivo `.epub` válido contendo:
 
 ### PDF
 Gera um arquivo `.pdf` montando um HTML completo com CSS embutido, fontes inclusas e renderizado via `BrowserWindow` do Electron, preservando a formatação visual do editor.
+
+## Releases
+
+As releases são geradas automaticamente pelo GitHub Actions (`.github/workflows/release.yml`) quando uma tag `v*` é enviada. O processo:
+
+1. Confere se a tag corresponde à versão do `package.json` (ex.: tag `v0.0.5` → versão `0.0.5`).
+2. Instala dependências, roda os testes e gera os instaladores (Windows: NSIS + portable; Linux: AppImage + deb).
+3. Publica a release no GitHub com notas geradas automaticamente.
+
+Para publicar uma nova versão:
+
+```bash
+npm version patch
+git push --tags
+```
+
+> `npm version` atualiza a versão no `package.json`, cria o commit e a tag `vX.Y.Z` correspondente. Mantenha a versão do `readme.md` em sincronia.
 
 ## Status
 O projeto está em desenvolvimento ativo.
