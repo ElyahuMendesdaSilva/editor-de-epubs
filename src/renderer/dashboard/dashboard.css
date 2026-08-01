@@ -621,6 +621,10 @@ body {
     gap: 12px;
 }
 
+.settings-section[hidden] {
+    display: none;
+}
+
 .settings-info-grid,
 .settings-credits-list {
     display: flex;
