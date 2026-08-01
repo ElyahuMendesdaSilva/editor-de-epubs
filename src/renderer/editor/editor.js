@@ -39,6 +39,9 @@
     const divider = document.getElementById('divider');
     const editorPane = document.getElementById('editorPane');
     const workspace = document.querySelector('.workspace');
+    const sidebar = document.getElementById('sidebar');
+    const sidebarDivider = document.getElementById('sidebarDivider');
+    const sectionsDivider = document.getElementById('sectionsDivider');
 
     const blockStyle = document.getElementById('blockStyle');
 
@@ -86,6 +89,14 @@
 
     let isDragging = false;
 
+    // Indica qual divisor está sendo arrastado (o da direita, entre o
+    // editor e o painel de código, ou o da esquerda, da barra lateral).
+    let draggingSidebarDivider = false;
+
+    // Divisor interno da barra lateral, entre Capítulos e Imagens:
+    // arrastá-lo verticalmente redimensiona a altura da lista de imagens.
+    let draggingSectionsDivider = false;
+
     let currentZoom = 100;
 
     let saveTimeout = null;
@@ -110,6 +121,11 @@
     let selectedImageId = null;
     let cssSaveTimeout = null;
     let knownImages = [];
+
+    // Mapa { idDaImagem: boolean } preenchido pelo main process: diz se
+    // cada imagem está sendo usada em algum capítulo ou folha de estilo.
+    // Usado para marcar com um ícone vermelho as imagens não usadas.
+    let imageUsage = {};
 
     // Edição direta do XHTML no painel "Código gerado". Enquanto
     // isEditingCode for true, o clique fora do bloco de código (e fora
@@ -382,6 +398,8 @@
             // Ao trocar/criar/excluir capítulo é um bom momento para gravar
             // no disco imediatamente (sem esperar o debounce do autosave)
             persistChapter(chapter);
+
+            refreshImagesUsage();
         }
     }
 
@@ -427,6 +445,7 @@
             if (chapter) {
                 chapter.html = cleanHTML();
                 persistChapter(chapter);
+                refreshImagesUsage();
             }
 
         }, 800);
@@ -875,6 +894,23 @@
 
             item.appendChild(thumb);
 
+            // Imagem sem nenhum uso no projeto ganha um ícone vermelho
+            // no canto para o usuário saber que pode excluí-la.
+            if (imageUsage[imageInfo.id] === false) {
+
+                item.classList.add('unused');
+                item.title = (imageInfo.originalName || '') +
+                    ' — imagem não usada em nenhum capítulo nem CSS';
+
+                const badge = document.createElement('span');
+
+                badge.className = 'image-unused-badge';
+                badge.textContent = '!';
+                badge.title = 'Imagem não usada em nenhum capítulo nem CSS';
+
+                item.appendChild(badge);
+            }
+
             item.addEventListener('click', () => {
 
                 // Clicar de novo na imagem já selecionada volta para a
@@ -900,6 +936,34 @@
         const result = await window.electronAPI.listarImagens(projectPath);
 
         knownImages = (result && result.success) ? (result.images || []) : [];
+
+        renderImageStyleList();
+
+        refreshImagesUsage();
+    }
+
+    // Pede ao main process para verificar, em todo o projeto (capítulos
+    // e CSS), quais imagens não estão sendo usadas. O capítulo ativo é
+    // "limpo" antes (mesmo HTML que o autosave gravaria) para que uma
+    // imagem recém-inserida já conte como usada imediatamente.
+    async function refreshImagesUsage() {
+
+        if (!projectPath || !window.electronAPI || !window.electronAPI.verificarUsoImagens) {
+            return;
+        }
+
+        const activeChapter = getActiveChapter();
+
+        if (activeChapter) {
+            activeChapter.html = cleanHTML();
+        }
+
+        const result = await window.electronAPI.verificarUsoImagens({
+            projectPath,
+            chaptersHtml: chapters.map(chapter => chapter.html)
+        });
+
+        imageUsage = (result && result.success) ? (result.usage || {}) : {};
 
         renderImageStyleList();
     }
@@ -1094,6 +1158,10 @@
                 if (!result || !result.success) {
                     console.error('Erro ao salvar CSS:', result && result.error);
                 }
+
+                // CSS pode referenciar imagens (ex: background-image);
+                // reavalia o uso para o ícone vermelho refletir isso.
+                refreshImagesUsage();
             });
 
         }, 600);
@@ -3559,6 +3627,7 @@ ${cleanHTML()}
             () => {
 
                 isDragging = true;
+                draggingSidebarDivider = false;
 
                 divider.classList.add(
                     'dragging'
@@ -3574,7 +3643,7 @@ ${cleanHTML()}
             'mousemove',
             event => {
 
-                if (!isDragging) {
+                if (!isDragging || draggingSidebarDivider || draggingSectionsDivider) {
                     return;
                 }
 
@@ -3611,6 +3680,182 @@ ${cleanHTML()}
                 isDragging = false;
 
                 divider.classList.remove(
+                    'dragging'
+                );
+
+                document.body.style.userSelect =
+                    '';
+            }
+        );
+    }
+
+    /* =========================================================
+       34-B. DIVISOR ARRASTÁVEL DA BARRA LATERAL
+       -------------------------------------------------------
+       Mesmo comportamento do divisor da direita, mas aplicado à
+       barra lateral de capítulos/imagens. Quanto mais larga a
+       barra, maiores ficam as miniaturas de imagem do painel
+       "Imagens" (o tamanho delas acompanha o contêiner via CSS).
+    ========================================================= */
+
+    function setupSidebarDivider() {
+
+        if (!sidebarDivider || !sidebar || !workspace) {
+            return;
+        }
+
+        sidebarDivider.addEventListener(
+            'mousedown',
+            () => {
+
+                isDragging = true;
+                draggingSidebarDivider = true;
+
+                sidebarDivider.classList.add(
+                    'dragging'
+                );
+
+                document.body.style.userSelect =
+                    'none';
+            }
+        );
+
+        window.addEventListener(
+            'mousemove',
+            event => {
+
+                if (!isDragging || !draggingSidebarDivider) {
+                    return;
+                }
+
+                const rect =
+                    workspace.getBoundingClientRect();
+
+                let percentage =
+                    (
+                        (event.clientX - rect.left) /
+                        rect.width
+                    ) * 100;
+
+                percentage =
+                    Math.min(
+                        45,
+                        Math.max(
+                            16,
+                            percentage
+                        )
+                    );
+
+                sidebar.style.flex =
+                    `0 0 ${percentage}%`;
+            }
+        );
+
+        window.addEventListener(
+            'mouseup',
+            () => {
+
+                isDragging = false;
+                draggingSidebarDivider = false;
+
+                sidebarDivider.classList.remove(
+                    'dragging'
+                );
+
+                document.body.style.userSelect =
+                    '';
+            }
+        );
+    }
+
+
+    /* =========================================================
+       34-C. DIVISOR ARRASTÁVEL ENTRE CAPÍTULOS E IMAGENS
+       -------------------------------------------------------
+       A divisória horizontal dentro da barra lateral redimensiona
+       a altura da lista de imagens: arrastar para baixo aumenta,
+       para cima diminui. A lista de capítulos (flex: 1) ocupa o
+       espaço restante.
+    ========================================================= */
+
+    function setupSectionsDivider() {
+
+        if (!sectionsDivider || !imageStyleListEl || !sidebar) {
+            return;
+        }
+
+        const chapterHeader = sidebar.querySelector('.sidebar-header');
+        const imagesHeader = sidebar.querySelectorAll('.sidebar-header')[1];
+        const cssPanel = sidebar.querySelector('.css-editor-panel');
+        const MIN_IMAGES_HEIGHT = 60;
+        const MIN_CHAPTERS_HEIGHT = 40;
+
+        let startY = 0;
+        let startHeight = 0;
+        let maxHeight = 0;
+
+        sectionsDivider.addEventListener(
+            'mousedown',
+            event => {
+
+                isDragging = true;
+                draggingSectionsDivider = true;
+
+                sectionsDivider.classList.add(
+                    'dragging'
+                );
+
+                document.body.style.userSelect =
+                    'none';
+
+                startY = event.clientY;
+                startHeight = imageStyleListEl.offsetHeight;
+
+                // Soma a altura fixa dos demais blocos da barra para o
+                // redimensionamento nunca esconder a lista de capítulos.
+                const fixedHeight =
+                    (chapterHeader ? chapterHeader.offsetHeight : 34) +
+                    (imagesHeader ? imagesHeader.offsetHeight : 34) +
+                    (cssPanel ? cssPanel.offsetHeight : 220) +
+                    MIN_CHAPTERS_HEIGHT;
+
+                maxHeight = Math.max(
+                    MIN_IMAGES_HEIGHT,
+                    sidebar.clientHeight - fixedHeight
+                );
+            }
+        );
+
+        window.addEventListener(
+            'mousemove',
+            event => {
+
+                if (!isDragging || !draggingSectionsDivider) {
+                    return;
+                }
+
+                const newHeight = Math.min(
+                    maxHeight,
+                    Math.max(
+                        MIN_IMAGES_HEIGHT,
+                        startHeight + (event.clientY - startY)
+                    )
+                );
+
+                imageStyleListEl.style.height =
+                    newHeight + 'px';
+            }
+        );
+
+        window.addEventListener(
+            'mouseup',
+            () => {
+
+                isDragging = false;
+                draggingSidebarDivider = false;
+                draggingSectionsDivider = false;
+
+                sectionsDivider.classList.remove(
                     'dragging'
                 );
 
@@ -3932,6 +4177,14 @@ ${cleanHTML()}
 
         // Divisor.
         setupDivider();
+
+
+        // Divisor da barra lateral esquerda.
+        setupSidebarDivider();
+
+
+        // Divisor interno entre Capítulos e Imagens.
+        setupSectionsDivider();
 
 
         // Barra lateral de capítulos.

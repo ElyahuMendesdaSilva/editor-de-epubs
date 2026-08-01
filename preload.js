@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     listarProjetos: () => ipcRenderer.invoke('listar-projetos'),
     carregarProjeto: (projectPath) => ipcRenderer.invoke('carregar-projeto', projectPath),
     listarImagens: (projectPath) => ipcRenderer.invoke('listar-imagens', projectPath),
+    verificarUsoImagens: (dados) => ipcRenderer.invoke('verificar-uso-imagens', dados),
     lerCSS: (dados) => ipcRenderer.invoke('ler-css', dados),
     salvarCSS: (dados) => ipcRenderer.invoke('salvar-css', dados),
     // Aceita tanto uma string (caminho do projeto, formato clássico)

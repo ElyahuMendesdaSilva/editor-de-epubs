@@ -653,6 +653,70 @@ ipcMain.handle('listar-imagens', async (event, projectPath) => {
     }
 });
 
+// Verifica quais imagens do projeto estão sendo usadas em algum capítulo
+// ou folha de estilo. Recebe também o HTML atual dos capítulos em memória
+// (chaptersHtml), porque o autosave pode ainda não ter gravado no disco a
+// última edição. Retorna um mapa { idDaImagem: true/false } usado pelo
+// painel lateral "Imagens" para marcar em vermelho as que não são usadas.
+ipcMain.handle('verificar-uso-imagens', async (event, { projectPath, chaptersHtml }) => {
+    try {
+        if (!projectPath) {
+            throw new Error('Nenhum projeto aberto.');
+        }
+
+        const manifestPath = path.join(projectPath, 'images', 'manifest.json');
+        const manifest = readJSONSafe(manifestPath, []);
+
+        const corpusParts = [];
+
+        // Conteúdo dos capítulos ainda em memória (mais recente que o disco)
+        if (Array.isArray(chaptersHtml)) {
+            corpusParts.push(...chaptersHtml.filter(Boolean));
+        }
+
+        // Conteúdo dos capítulos já gravados no disco
+        const chaptersDir = path.join(projectPath, 'chapters');
+        if (fsSync.existsSync(chaptersDir)) {
+            const chapterFiles = await fs.readdir(chaptersDir);
+            for (const fileName of chapterFiles) {
+                if (!fileName.endsWith('.xhtml')) {
+                    continue;
+                }
+                corpusParts.push(
+                    await fs.readFile(path.join(chaptersDir, fileName), 'utf-8')
+                );
+            }
+        }
+
+        // Conteúdo de todas as folhas de estilo (stylesheet.css e <id>.css)
+        const stylesDir = path.join(projectPath, 'styles');
+        if (fsSync.existsSync(stylesDir)) {
+            const cssFiles = await fs.readdir(stylesDir);
+            for (const fileName of cssFiles) {
+                if (!fileName.endsWith('.css')) {
+                    continue;
+                }
+                corpusParts.push(
+                    await fs.readFile(path.join(stylesDir, fileName), 'utf-8')
+                );
+            }
+        }
+
+        const corpus = corpusParts.join('\n');
+        const usage = {};
+
+        for (const img of manifest) {
+            usage[img.id] = Boolean(img.file && corpus.includes(img.file));
+        }
+
+        return { success: true, usage };
+
+    } catch (error) {
+        console.error('Erro ao verificar uso das imagens:', error);
+        return { success: false, error: error.message, usage: {} };
+    }
+});
+
 // Lista os arquivos de fonte disponíveis na pasta fonts/ do projeto.
 // Retorna um array com { name, file, format } para cada fonte encontrada.
 ipcMain.handle('listar-fontes', async (event, projectPath) => {
@@ -968,4 +1032,3 @@ ipcMain.handle('exportar-projeto', async (event, dados) => {
         return { success: false, error: error.message };
     }
 });
-
