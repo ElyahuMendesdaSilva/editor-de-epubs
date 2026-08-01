@@ -72,6 +72,8 @@
 
     const zoomButtons = document.querySelectorAll('.zoom-btn');
     const zoomTrack = document.querySelector('.zoom-track span');
+    const zoomValueEl = document.getElementById('zoomValue');
+    const exportSizeLabelEl = document.getElementById('exportSizeLabel');
 
     const chapterListEl = document.getElementById('chapterList');
     const addChapterBtn = document.getElementById('addChapterBtn');
@@ -1103,6 +1105,9 @@
         selectImageForCss(null);
 
         closeDeleteImageModal();
+
+        // Remover o arquivo muda o tamanho do arquivo final.
+        scheduleSizeEstimate(300);
     }
 
 
@@ -1181,6 +1186,9 @@
                 // CSS pode referenciar imagens (ex: background-image);
                 // reavalia o uso para o ícone vermelho refletir isso.
                 refreshImagesUsage();
+
+                // CSS entra no arquivo final; atualiza o tamanho estimado.
+                scheduleSizeEstimate(600);
             });
 
         }, 600);
@@ -1787,6 +1795,10 @@
         if (searchControl && !searchControl.hidden) {
             refreshSearchHighlights();
         }
+
+        // Depois que o usuário para de digitar, atualiza o tamanho
+        // aproximado do arquivo de exportação na barra de status.
+        scheduleSizeEstimate(1200);
     }
 
 
@@ -3716,6 +3728,9 @@
                 );
             });
         }
+
+        // O tamanho exibido na barra de status é do formato recém-selecionado.
+        updateExportSizeEstimate();
     }
 
 
@@ -3793,6 +3808,10 @@
         editor.style.zoom =
             `${currentZoom}%`;
 
+        if (zoomValueEl) {
+            zoomValueEl.textContent = `${currentZoom}%`;
+        }
+
         if (zoomTrack) {
 
             const percentage =
@@ -3855,6 +3874,107 @@
         );
 
         updateZoom();
+    }
+
+
+    /* =========================================================
+       32-B. TAMANHO APROXIMADO DA EXPORTAÇÃO
+       -------------------------------------------------------
+       Exibe na barra de status o tamanho aproximado do arquivo
+       final (.epub ou .pdf, conforme o formato selecionado no
+       dropdown de exportação). O main process gera o arquivo em
+       memória e devolve o tamanho em bytes.
+    ========================================================= */
+
+    let sizeEstimateTimeout = null;
+    let sizeEstimateBusy = false;
+    let sizeEstimatePending = false;
+
+    function formatFileSize(bytes) {
+
+        if (!bytes && bytes !== 0) {
+            return '—';
+        }
+
+        if (bytes < 1024) {
+            return bytes + ' B';
+        }
+
+        if (bytes < 1024 * 1024) {
+            return (bytes / 1024).toFixed(1).replace('.', ',') + ' KB';
+        }
+
+        return (bytes / (1024 * 1024)).toFixed(2).replace('.', ',') + ' MB';
+    }
+
+    // Agenda a atualização para depois que o usuário para de digitar;
+    // nesse momento o autosave (800ms) já gravou o conteúdo no disco.
+    function scheduleSizeEstimate(delay) {
+
+        clearTimeout(sizeEstimateTimeout);
+
+        sizeEstimateTimeout = setTimeout(
+            updateExportSizeEstimate,
+            delay
+        );
+    }
+
+    async function updateExportSizeEstimate() {
+
+        if (
+            !projectPath ||
+            !exportSizeLabelEl ||
+            !window.electronAPI ||
+            !window.electronAPI.estimarTamanhoExportacao
+        ) {
+
+            if (exportSizeLabelEl) {
+                exportSizeLabelEl.textContent = '';
+            }
+
+            return;
+        }
+
+        // Não deixa duas estimativas rodarem ao mesmo tempo (a de PDF,
+        // principalmente, cria uma janela oculta para imprimir).
+        if (sizeEstimateBusy) {
+            sizeEstimatePending = true;
+            return;
+        }
+
+        sizeEstimateBusy = true;
+
+        try {
+
+            const result = await window.electronAPI.estimarTamanhoExportacao({
+                projectPath,
+                format: exportFormat
+            });
+
+            if (exportSizeLabelEl) {
+
+                if (result && result.success) {
+
+                    exportSizeLabelEl.textContent =
+                        exportFormat.toUpperCase() +
+                        ' ≈ ' +
+                        formatFileSize(result.bytes);
+
+                } else {
+
+                    exportSizeLabelEl.textContent = '';
+                }
+            }
+
+        } finally {
+
+            sizeEstimateBusy = false;
+
+            if (sizeEstimatePending) {
+                sizeEstimatePending = false;
+                updateExportSizeEstimate();
+            }
+        }
     }
 
 

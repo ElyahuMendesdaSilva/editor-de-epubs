@@ -40,5 +40,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     listarFontes: (projectPath) => ipcRenderer.invoke('listar-fontes', projectPath),
     listarFontesBase: () => ipcRenderer.invoke('listar-fontes-base'),
     importarFonte: (projectPath) => ipcRenderer.invoke('importar-fonte', projectPath),
+    estimarTamanhoExportacao: (dados) => ipcRenderer.invoke('estimar-tamanho-exportacao', dados),
     exportarProjeto: (dados) => ipcRenderer.invoke('exportar-projeto', dados)
 });

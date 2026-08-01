@@ -1032,3 +1032,31 @@ ipcMain.handle('exportar-projeto', async (event, dados) => {
         return { success: false, error: error.message };
     }
 });
+
+// Estima o tamanho do arquivo final (.epub ou .pdf, conforme o formato
+// pedido) gerando o arquivo em memória e devolvendo o total de bytes.
+// Usado pela barra de status do editor ("EPUB ≈ 1,2 MB", por exemplo).
+ipcMain.handle('estimar-tamanho-exportacao', async (event, { projectPath, format }) => {
+    try {
+        if (!projectPath) {
+            throw new Error('Nenhum projeto aberto.');
+        }
+
+        const projectJsonPath = path.join(projectPath, 'project.json');
+        const projectData = readJSONSafe(projectJsonPath, null);
+
+        if (!projectData) {
+            throw new Error('project.json não encontrado nessa pasta.');
+        }
+
+        const fileBuffer = format === 'pdf'
+            ? await buildPdf(projectPath, projectData)
+            : await buildEpub(projectPath, projectData);
+
+        return { success: true, bytes: fileBuffer.length };
+
+    } catch (error) {
+        console.error('Erro ao estimar tamanho da exportação:', error);
+        return { success: false, error: error.message };
+    }
+});

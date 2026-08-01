@@ -1820,6 +1820,15 @@ body {
     font-size: 13px;
 }
 
+#exportSizeLabel {
+
+    margin-right: 12px;
+
+    color: var(--ink);
+
+    white-space: nowrap;
+}
+
 .zoom-track {
 
     width: 70px;
