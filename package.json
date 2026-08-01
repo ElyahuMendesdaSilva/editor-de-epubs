@@ -1,7 +1,7 @@
 {
   "name": "editor-de-epubs",
   "productName": "Editor de eBook",
-  "version": "0.0.6",
+  "version": "0.0.4",
   "description": "Um editor minimalista para transformar algumas novels em epub",
   "license": "SEE LICENSE IN LICENSE",
   "author": "elyahumendes",
