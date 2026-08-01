@@ -43,6 +43,14 @@
     const sidebarDivider = document.getElementById('sidebarDivider');
     const sectionsDivider = document.getElementById('sectionsDivider');
 
+    const textToolbar = document.getElementById('textToolbar');
+    const imageToolbar = document.getElementById('imageToolbar');
+    const imageWidthSelect = document.getElementById('imageWidthSelect');
+    const deleteImageFromDocBtn = document.getElementById('deleteImageFromDocBtn');
+    const imageAlignBtns = Array.from(
+        document.querySelectorAll('.image-align-btn')
+    );
+
     const blockStyle = document.getElementById('blockStyle');
 
     const fontSelect = document.querySelector('.font-select');
@@ -96,6 +104,11 @@
     // Divisor interno da barra lateral, entre Capítulos e Imagens:
     // arrastá-lo verticalmente redimensiona a altura da lista de imagens.
     let draggingSectionsDivider = false;
+
+    // Imagem selecionada dentro do documento (painel "Documento"). Enquanto
+    // uma imagem está selecionada, a toolbar de texto é substituída pela
+    // toolbar de propriedades da imagem (largura, alinhamento, excluir).
+    let selectedImageEl = null;
 
     let currentZoom = 100;
 
@@ -501,6 +514,8 @@
 
         editor.innerHTML = chapter ? relativeToAbsoluteImages(chapter.html) : '';
 
+        deselectImage();
+
         syncOutput();
 
         renderChapterList();
@@ -526,6 +541,8 @@
         activeChapterId = newChapter.id;
 
         editor.innerHTML = newChapter.html;
+
+        deselectImage();
 
         syncOutput();
 
@@ -561,6 +578,8 @@
             activeChapterId = chapters[nextIndex].id;
 
             editor.innerHTML = relativeToAbsoluteImages(chapters[nextIndex].html);
+
+            deselectImage();
 
             syncOutput();
 
@@ -1235,6 +1254,12 @@
             node.parentNode.replaceChild(p, node);
             p.appendChild(node);
         }
+
+        // Remove a classe de seleção (só visual, usada no editor) para
+        // ela não ir parar no XHTML salvo/exportado.
+        container.querySelectorAll('.image-selected').forEach(img => {
+            img.classList.remove('image-selected');
+        });
 
         html = container.innerHTML;
 
@@ -1914,6 +1939,8 @@
 
         const imagesDirUrl = getProjectImagesDirUrl();
 
+        let lastInsertedImage = null;
+
         result.images.forEach(imageInfo => {
 
             const image =
@@ -1933,7 +1960,15 @@
             image.dataset.imgId = imageInfo.id;
 
             insertNodeAtCursor(image);
+
+            lastInsertedImage = image;
         });
+
+        // Seleciona a última imagem inserida para a toolbar de
+        // propriedades de imagem já aparecer (como no Google Docs).
+        if (lastInsertedImage) {
+            selectImage(lastInsertedImage);
+        }
 
         // Atualiza a lista do painel lateral de CSS por imagem, para as
         // imagens recém-adicionadas aparecerem lá imediatamente.
@@ -2047,6 +2082,281 @@
         });
     }
 
+
+    /* =========================================================
+       14-C. SELEÇÃO E PROPRIEDADES DE IMAGEM
+       -------------------------------------------------------
+       Clicar numa imagem dentro do documento a seleciona e troca
+       a toolbar de texto pela toolbar de propriedades da imagem
+       (largura, alinhamento e remoção), no estilo do Google Docs.
+       Clicar fora da imagem (ou em qualquer texto) desfaz a
+       seleção e devolve a toolbar de texto.
+    ========================================================= */
+
+    function selectImage(img) {
+
+        if (!img || img.tagName !== 'IMG') {
+            return;
+        }
+
+        deselectImage();
+
+        selectedImageEl = img;
+
+        img.classList.add('image-selected');
+
+        if (textToolbar) {
+            textToolbar.hidden = true;
+        }
+
+        if (imageToolbar) {
+            imageToolbar.hidden = false;
+        }
+
+        syncImageControlsFromSelection();
+    }
+
+    function deselectImage() {
+
+        if (selectedImageEl) {
+            selectedImageEl.classList.remove('image-selected');
+            selectedImageEl = null;
+        }
+
+        if (textToolbar) {
+            textToolbar.hidden = false;
+        }
+
+        if (imageToolbar) {
+            imageToolbar.hidden = true;
+        }
+    }
+
+    function getImageAlignment(img) {
+
+        // Só considera os estilos inline, que são os que a toolbar
+        // aplica. Sem estilo inline, vale o padrão do CSS (centralizada).
+        const marginLeft = img.style.marginLeft;
+        const marginRight = img.style.marginRight;
+
+        if (marginLeft === '0' || marginLeft === '0px') {
+            return 'left';
+        }
+
+        if (marginRight === '0' || marginRight === '0px') {
+            return 'right';
+        }
+
+        return 'center';
+    }
+
+    function updateImageAlignButtons(align) {
+
+        imageAlignBtns.forEach(btn => {
+            btn.classList.toggle(
+                'active',
+                btn.dataset.imageAlign === align
+            );
+        });
+    }
+
+    function applyImageAlignment(img, align) {
+
+        if (align === 'left') {
+            img.style.marginLeft = '0';
+            img.style.marginRight = 'auto';
+        } else if (align === 'right') {
+            img.style.marginLeft = 'auto';
+            img.style.marginRight = '0';
+        } else {
+            img.style.marginLeft = 'auto';
+            img.style.marginRight = 'auto';
+        }
+    }
+
+    function applyImageWidth(img, percent) {
+
+        if (percent) {
+            img.style.width = percent + '%';
+            img.style.maxWidth = '100%';
+        } else {
+            img.style.removeProperty('width');
+        }
+    }
+
+    function syncImageControlsFromSelection() {
+
+        if (!selectedImageEl || !imageWidthSelect) {
+            return;
+        }
+
+        const width = Math.round(
+            parseFloat(selectedImageEl.style.width)
+        );
+
+        if (!(width > 0)) {
+            imageWidthSelect.value = '';
+            updateImageAlignButtons(
+                getImageAlignment(selectedImageEl)
+            );
+            return;
+        }
+
+        let matched = false;
+
+        for (const option of imageWidthSelect.options) {
+            if (parseInt(option.value, 10) === width) {
+                imageWidthSelect.value = option.value;
+                matched = true;
+                break;
+            }
+        }
+
+        if (!matched) {
+            imageWidthSelect.value = '65';
+        }
+
+        updateImageAlignButtons(
+            getImageAlignment(selectedImageEl)
+        );
+    }
+
+    function setupImageSelection() {
+
+        if (!editor) {
+            return;
+        }
+
+        editor.addEventListener('mousedown', event => {
+
+            if (event.target && event.target.tagName === 'IMG') {
+
+                // Não deixa o contenteditable iniciar uma seleção de
+                // texto em cima da imagem: apenas seleciona a imagem.
+                event.preventDefault();
+
+                selectImage(event.target);
+
+                return;
+            }
+
+            deselectImage();
+        });
+
+        // Clicar fora do editor (e fora da toolbar de imagem) desfaz
+        // a seleção da imagem.
+        document.addEventListener('mousedown', event => {
+
+            if (!selectedImageEl) {
+                return;
+            }
+
+            const insideEditor = editor.contains(event.target);
+            const insideImageToolbar = imageToolbar &&
+                imageToolbar.contains(event.target);
+
+            if (!insideEditor && !insideImageToolbar) {
+                deselectImage();
+            }
+        });
+
+        editor.addEventListener('keydown', event => {
+
+            if (!selectedImageEl) {
+                return;
+            }
+
+            if (event.key === 'Escape') {
+
+                event.preventDefault();
+
+                deselectImage();
+
+            } else if (
+                event.key === 'Delete' ||
+                event.key === 'Backspace'
+            ) {
+
+                // Assim como no Google Docs, Del/Backspace com a imagem
+                // selecionada remove a imagem do documento.
+                event.preventDefault();
+
+                const img = selectedImageEl;
+
+                deselectImage();
+
+                img.remove();
+
+                syncOutput();
+
+            } else if (
+                event.key.length === 1 &&
+                !event.ctrlKey &&
+                !event.metaKey
+            ) {
+
+                // Digitar texto com a imagem selecionada devolve a
+                // toolbar de texto (o cursor fica onde estava).
+                deselectImage();
+            }
+        });
+    }
+
+    function setupImageToolbar() {
+
+        if (imageWidthSelect) {
+
+            imageWidthSelect.addEventListener('change', () => {
+
+                if (!selectedImageEl) {
+                    return;
+                }
+
+                applyImageWidth(
+                    selectedImageEl,
+                    parseInt(imageWidthSelect.value, 10)
+                );
+
+                syncOutput();
+            });
+        }
+
+        imageAlignBtns.forEach(btn => {
+
+            btn.addEventListener('click', () => {
+
+                if (!selectedImageEl) {
+                    return;
+                }
+
+                const align = btn.dataset.imageAlign;
+
+                applyImageAlignment(selectedImageEl, align);
+
+                updateImageAlignButtons(align);
+
+                syncOutput();
+            });
+        });
+
+        if (deleteImageFromDocBtn) {
+
+            deleteImageFromDocBtn.addEventListener('click', () => {
+
+                if (!selectedImageEl) {
+                    return;
+                }
+
+                const img = selectedImageEl;
+
+                deselectImage();
+
+                img.remove();
+
+                syncOutput();
+            });
+        }
+    }
 
     /* =========================================================
        15. INSERIR ELEMENTO NO CURSOR
@@ -3266,6 +3576,8 @@
 
         editor.innerHTML = relativeToAbsoluteImages(editedHtml);
 
+        deselectImage();
+
         exitCodeEditMode();
 
         syncOutput();
@@ -4056,6 +4368,8 @@ ${cleanHTML()}
 
         editor.innerHTML = relativeToAbsoluteImages(activeChapter ? activeChapter.html : '');
 
+        deselectImage();
+
         if (result.project && result.project.title) {
 
             document.title = result.project.title + ' | Editor de eBook';
@@ -4100,6 +4414,9 @@ ${cleanHTML()}
         // salvo assim que a leitura do disco terminar.
         editor.innerHTML =
             DEFAULT_HTML;
+
+
+        deselectImage();
 
 
         // Eventos do editor.
@@ -4173,6 +4490,12 @@ ${cleanHTML()}
 
         // Arrastar e soltar imagens direto no editor.
         setupImageDragAndDrop();
+
+        // Seleção de imagem no documento (troca a toolbar de texto).
+        setupImageSelection();
+
+        // Toolbar de propriedades da imagem (largura, alinhamento, excluir).
+        setupImageToolbar();
 
 
         // Divisor.

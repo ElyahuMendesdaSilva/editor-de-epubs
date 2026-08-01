@@ -668,6 +668,29 @@ body {
 }
 
 
+.toolbar[hidden] {
+
+    display: none;
+}
+
+.image-toolbar-label {
+
+    font-family: var(--mono);
+
+    font-size: 10px;
+
+    letter-spacing: .1em;
+
+    text-transform: uppercase;
+
+    color: var(--ink-soft);
+
+    padding: 0 12px;
+
+    white-space: nowrap;
+}
+
+
 .tool-group {
 
     display: flex;
@@ -772,7 +795,8 @@ body {
 .style-select,
 .font-select,
 .size-select,
-.lineheight-select {
+.lineheight-select,
+.image-width-select {
 
     height: 30px;
 
@@ -798,7 +822,8 @@ body {
 .style-select:hover,
 .font-select:hover,
 .size-select:hover,
-.lineheight-select:hover {
+.lineheight-select:hover,
+.image-width-select:hover {
 
     background: var(--hover);
 }
@@ -806,7 +831,8 @@ body {
 .style-select:focus,
 .font-select:focus,
 .size-select:focus,
-.lineheight-select:focus {
+.lineheight-select:focus,
+.image-width-select:focus {
 
     border-color: var(--line);
 }
@@ -829,6 +855,11 @@ body {
 .lineheight-select {
 
     width: 100px;
+}
+
+.image-width-select {
+
+    width: 150px;
 }
 
 
@@ -1692,6 +1723,16 @@ body {
     margin: 24px auto;
 
     border-radius: 4px;
+
+    cursor: pointer;
+}
+
+
+#editor img.image-selected {
+
+    outline: 2px solid var(--accent);
+
+    outline-offset: 2px;
 }
 
 
