@@ -138,6 +138,10 @@ body {
     transition: all 0.2s ease;
 }
 
+.card[hidden] {
+    display: none;
+}
+
 .card:hover {
     border-style: solid;
     border-color: var(--accent);
@@ -609,6 +613,12 @@ body {
     font-weight: 600;
     color: var(--ink);
     margin-bottom: 14px;
+}
+
+.settings-section{
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
 }
 
 .settings-info-grid,

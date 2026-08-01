@@ -52,6 +52,13 @@
                     </svg>
                     <p>Abrir projeto</p>
                 </div>
+
+                <div class="card" id="btnImportEpub" role="button" tabindex="0" hidden>
+                    <svg xmlns="http://www.w3.org/2000/svg" height="32px" viewBox="0 -960 960 960" width="32px" fill="currentColor">
+                        <path d="M480-320 320-480l56-56 64 64v-328h80v328l64-64 56 56-160 160ZM240-160q-33 0-56.5-23.5T160-240v-120h80v120h480v-120h80v120q0 33-23.5 56.5T720-160H240Z"/>
+                    </svg>
+                    <p>Importar EPUB</p>
+                </div>
             </div>
         </section>
 
@@ -185,6 +192,16 @@
                         </div>
                         <label class="switch" for="sizeEstimateToggle">
                             <input type="checkbox" id="sizeEstimateToggle">
+                            <span class="switch-slider"></span>
+                        </label>
+                    </div>
+                    <div class="settings-info-item theme-toggle-row">
+                        <div class="theme-toggle-text">
+                            <span class="settings-info-label">Importar EPUB</span>
+                            <span class="settings-info-value" id="importEpubStatusLabel">Desativado</span>
+                        </div>
+                        <label class="switch" for="importEpubToggle">
+                            <input type="checkbox" id="importEpubToggle">
                             <span class="switch-slider"></span>
                         </label>
                     </div>

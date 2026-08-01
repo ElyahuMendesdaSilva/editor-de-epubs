@@ -17,6 +17,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     abrirProjeto: () => ipcRenderer.invoke('abrir-projeto'),
     obterInfoApp: () => ipcRenderer.invoke('obter-info-app'),
     obterDiretorioUsuario: () => ipcRenderer.invoke('obter-diretorio-usuario'),
+    selecionarEpub: () => ipcRenderer.invoke('selecionar-epub'),
+    obterMetadadosEpub: (epubPath) => ipcRenderer.invoke('obter-metadados-epub', epubPath),
+    importarProjeto: (dados) => ipcRenderer.invoke('importar-projeto', dados),
     criarProjeto: (projectPath) => {
         return ipcRenderer.invoke('criar-projeto', projectPath);
     },

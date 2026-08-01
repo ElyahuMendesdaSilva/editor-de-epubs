@@ -5,6 +5,7 @@ const fsSync = require('fs');
 const packageJson = require('../../../package.json');
 const { buildEpub } = require('../services/epub-exporter');
 const { buildPdf } = require('../services/pdf-exporter');
+const { parseEpub, importEpubIntoProject } = require('../services/epub-importer');
 const { addToRegistry, getRegistryPath } = require('../services/project-registry');
 const { closeVoidTags, readJSONSafe, sanitizeEntitiesForXml, sanitizeFolderName, writeJSON } = require('../utils/files');
 
@@ -174,6 +175,134 @@ ipcMain.handle('criar-projeto', async (event, dados) => {
 
     } catch (error) {
         console.error('Erro ao criar projeto:', error);
+
+        return {
+            success: false,
+            error: error.message
+        };
+    }
+});
+
+// Abre o diálogo nativo para escolher um único arquivo .epub (usado
+// pelo botão "Importar EPUB" do Dashboard).
+ipcMain.handle('selecionar-epub', async () => {
+    try {
+        const dialogResult = await dialog.showOpenDialog({
+            title: 'Selecionar arquivo EPUB',
+            properties: ['openFile'],
+            filters: [
+                { name: 'Arquivos EPUB', extensions: ['epub'] }
+            ]
+        });
+
+        if (dialogResult.canceled || !dialogResult.filePaths || dialogResult.filePaths.length === 0) {
+            return { success: false, canceled: true };
+        }
+
+        return { success: true, path: dialogResult.filePaths[0] };
+
+    } catch (error) {
+        console.error('Erro ao selecionar EPUB:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// Lê os metadados de um .epub (título, autor, idioma, descrição e capa)
+// para pré-preencher o modal de importação do Dashboard.
+ipcMain.handle('obter-metadados-epub', async (event, epubPath) => {
+    try {
+        const parsed = await parseEpub(epubPath);
+
+        let coverDataUrl = null;
+
+        if (parsed.cover) {
+            const ext = path.extname(parsed.cover.file).toLowerCase();
+            const mime = ext === '.png'
+                ? 'image/png'
+                : ext === '.gif'
+                    ? 'image/gif'
+                    : ext === '.webp'
+                        ? 'image/webp'
+                        : 'image/jpeg';
+
+            coverDataUrl = `data:${mime};base64,${parsed.cover.data.toString('base64')}`;
+        }
+
+        return {
+            success: true,
+            title: parsed.title,
+            author: parsed.author,
+            language: parsed.language,
+            description: parsed.description,
+            coverDataUrl
+        };
+
+    } catch (error) {
+        console.error('Erro ao ler metadados do EPUB:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// Cria um projeto novo a partir de um arquivo .epub: monta a pasta do
+// projeto, descompacta capítulos/imagens/estilos/fontes do epub dentro
+// dela e salva o project.json (mesma estrutura de um projeto criado
+// pelo modal "Novo eBook").
+ipcMain.handle('importar-projeto', async (event, dados) => {
+    try {
+        const { title, author, language, description, basePath, coverPath, epubPath } = dados;
+
+        if (!epubPath) {
+            throw new Error('Nenhum arquivo .epub foi selecionado.');
+        }
+
+        if (!fsSync.existsSync(epubPath)) {
+            throw new Error('O arquivo .epub não existe.');
+        }
+
+        const metadata = await parseEpub(epubPath);
+
+        const existingTitles = getRegisteredProjectTitles();
+        let finalTitle = String(title || metadata.title || 'Sem título').trim() || 'Sem título';
+        let renamed = false;
+        let originalTitle = finalTitle;
+
+        if (existingTitles.has(normalizeProjectTitle(finalTitle))) {
+            finalTitle = getAvailableProjectTitle(finalTitle, existingTitles);
+            renamed = true;
+        }
+
+        const base = basePath || app.getPath('home');
+        const folderName = sanitizeFolderName(finalTitle);
+        const projectDir = path.join(base, folderName);
+
+        if (fsSync.existsSync(path.join(projectDir, 'project.json'))) {
+            return {
+                success: false,
+                code: 'DUPLICATE_PROJECT_FOLDER',
+                error: 'Já existe um projeto nessa pasta.'
+            };
+        }
+
+        await importEpubIntoProject(epubPath, projectDir, {
+            title: finalTitle,
+            author: author || metadata.author,
+            language: language || metadata.language,
+            description: description || metadata.description,
+            coverPath
+        });
+
+        await addToRegistry(projectDir);
+
+        return {
+            success: true,
+            path: projectDir,
+            renamed: renamed,
+            originalTitle: originalTitle,
+            title: finalTitle
+        };
+
+    } catch (error) {
+        console.error('Erro ao importar projeto:', error);
 
         return {
             success: false,

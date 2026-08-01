@@ -18,6 +18,7 @@ A organização de código está documentada em [ARCHITECTURE.md](ARCHITECTURE.m
 ## Funcionalidades
 
 - **Gerenciamento de projetos** — crie, abra, edite e exclua projetos de eBook, cada um salvo em sua própria pasta local, com prevenção automática de duplicatas por título.
+- **Importação de EPUB** — importe um arquivo `.epub` existente: o app descompacta capítulos, imagens, estilos, fontes e capa num projeto novo, pronto para editar e reexportar.
 - **Capa personalizada** — arraste e solte ou selecione uma imagem de capa ao criar o projeto.
 - **Editor de metadados** — edite título, autor, idioma e descrição do projeto após a criação.
 - **Editor de texto** com:

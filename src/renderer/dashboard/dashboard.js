@@ -1,6 +1,7 @@
 document.addEventListener('DOMContentLoaded', () => {
     const btnNewProject = document.getElementById('btnNewProject');
     const btnOpenProject = document.getElementById('btnOpenProject');
+    const btnImportEpub = document.getElementById('btnImportEpub');
     const modalOverlay = document.getElementById('modalOverlay');
     const modalTitleEl = document.getElementById('modalTitle');
     const submitProjectBtn = document.getElementById('submitProjectBtn');
@@ -39,6 +40,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const themeStatusLabel = document.getElementById('themeStatusLabel');
     const sizeEstimateToggle = document.getElementById('sizeEstimateToggle');
     const sizeEstimateStatusLabel = document.getElementById('sizeEstimateStatusLabel');
+    const importEpubToggle = document.getElementById('importEpubToggle');
+    const importEpubStatusLabel = document.getElementById('importEpubStatusLabel');
 
     // Modo desenvolvedor
     const devSettingsSection = document.getElementById('devSettingsSection');
@@ -59,6 +62,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // em modo "editar" e o formulário atualiza esse projeto em vez de
     // criar um novo.
     let editingProjectPath = null;
+    // Caminho do .epub escolhido para importação. Quando preenchido,
+    // o modal está em modo "importar" e o formulário chama importarProjeto.
+    let importingEpubPath = null;
     let noticeCloseAction = null;
 
     function showNotice(title, message, buttonLabel = 'Entendi', onClose = null) {
@@ -114,6 +120,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const openModal = async () => {
         editingProjectPath = null;
+        importingEpubPath = null;
 
         modalTitleEl.textContent = 'Novo eBook';
         submitProjectBtn.textContent = 'Salvar';
@@ -125,6 +132,49 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         pathInput.value = defaultProjectPath || '';
+
+        if (btnDeleteProject) {
+            btnDeleteProject.hidden = true;
+        }
+
+        modalOverlay.classList.add('active');
+    };
+
+    // Abre o modal de criação já em modo "importar", com os metadados
+    // do .epub pré-preenchidos (título, autor, idioma e descrição).
+    const openImportModal = async (metadata, epubPath) => {
+        editingProjectPath = null;
+        importingEpubPath = epubPath;
+
+        modalTitleEl.textContent = 'Importar eBook';
+        submitProjectBtn.textContent = 'Importar';
+        pathFieldGroup.hidden = false;
+        btnSelectFolder.hidden = false;
+
+        if (!defaultProjectPath) {
+            await loadDefaultProjectPath();
+        }
+
+        pathInput.value = defaultProjectPath || '';
+        titleInput.value = (metadata && metadata.title) || '';
+        authorInput.value = (metadata && metadata.author) || '';
+        langSelect.value = (metadata && metadata.language) || 'pt-BR';
+        descInput.value = (metadata && metadata.description) || '';
+
+        selectedCoverPath = null;
+
+        // Mostra a capa do .epub automaticamente; se o usuário escolher
+        // outra imagem no dropzone, ela substitui a pré-visualização e é
+        // usada no lugar da capa original na hora de importar.
+        if (metadata && metadata.coverDataUrl) {
+            coverPreviewImg.src = metadata.coverDataUrl;
+            coverPreviewImg.hidden = false;
+            coverDropzone.classList.add('has-image');
+        } else {
+            coverPreviewImg.hidden = true;
+            coverPreviewImg.src = '';
+            coverDropzone.classList.remove('has-image');
+        }
 
         if (btnDeleteProject) {
             btnDeleteProject.hidden = true;
@@ -176,6 +226,7 @@ document.addEventListener('DOMContentLoaded', () => {
         modalOverlay.classList.remove('active');
         form.reset();
         editingProjectPath = null;
+        importingEpubPath = null;
         selectedCoverPath = null;
         coverPreviewImg.hidden = true;
         coverPreviewImg.src = '';
@@ -190,6 +241,36 @@ document.addEventListener('DOMContentLoaded', () => {
 
     btnNewProject.addEventListener('click', openModal);
     btnCancel.addEventListener('click', closeModal);
+
+    // ---------- Importar um arquivo .epub ----------
+    if (btnImportEpub) {
+        btnImportEpub.addEventListener('click', async () => {
+            if (!window.electronAPI || typeof window.electronAPI.selecionarEpub !== 'function') {
+                alert('A importação de EPUB não está disponível. Reinicie o aplicativo e tente novamente.');
+                return;
+            }
+
+            const selection = await window.electronAPI.selecionarEpub();
+
+            if (!selection || selection.canceled) {
+                return;
+            }
+
+            if (!selection.success) {
+                alert('Não foi possível selecionar o arquivo: ' + (selection.error || 'Erro desconhecido.'));
+                return;
+            }
+
+            const meta = await window.electronAPI.obterMetadadosEpub(selection.path);
+
+            if (!meta || !meta.success) {
+                alert('Não foi possível ler o arquivo EPUB: ' + ((meta && meta.error) || 'Formato inválido.'));
+                return;
+            }
+
+            await openImportModal(meta, selection.path);
+        });
+    }
 
     // ---------- Abrir projeto existente (via project.json) ----------
     if (btnOpenProject) {
@@ -263,6 +344,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (settingsOverlay) {
             settingsOverlay.classList.remove('active');
         }
+
+        // Reflete as preferências no dashboard assim que as configurações
+        // fecham (ex.: mostrar/ocultar o botão "Importar EPUB" na hora).
+        applyDevModeVisibility();
     };
 
     if (tabProjetos) {
@@ -322,6 +407,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function applyDevModeVisibility() {
         const enabled = isDevModeEnabled();
+
+        updateImportEpubButtonVisibility();
+
+        // Mantém os toggles das opções de desenvolvedor sincronizados
+        // com o que está salvo, sempre que as configurações abrem/fecham
+        // ou o modo desenvolvedor muda.
+        applyImportEpubPreference(isImportEpubEnabled());
 
         if (devSettingsSection) {
             devSettingsSection.hidden = !enabled;
@@ -481,6 +573,59 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     loadSavedSizeEstimatePreference();
+
+    // ---------- Importar EPUB (só visível no modo desenvolvedor) ----------
+
+    const IMPORT_EPUB_STORAGE_KEY = 'ebook-editor-show-import-epub';
+
+    function isImportEpubEnabled() {
+        try {
+            return localStorage.getItem(IMPORT_EPUB_STORAGE_KEY) === '1';
+        } catch (error) {
+            console.error('Não foi possível ler a preferência de importação de EPUB:', error);
+            return false;
+        }
+    }
+
+    function updateImportEpubButtonVisibility() {
+        const visible = isDevModeEnabled() && isImportEpubEnabled();
+
+        if (btnImportEpub) {
+            btnImportEpub.hidden = !visible;
+        }
+    }
+
+    function applyImportEpubPreference(enabled) {
+        if (importEpubToggle) {
+            importEpubToggle.checked = enabled;
+        }
+
+        if (importEpubStatusLabel) {
+            importEpubStatusLabel.textContent = enabled ? 'Ativado' : 'Desativado';
+        }
+
+        updateImportEpubButtonVisibility();
+    }
+
+    function loadSavedImportEpubPreference() {
+        applyImportEpubPreference(isImportEpubEnabled());
+    }
+
+    if (importEpubToggle) {
+        importEpubToggle.addEventListener('change', () => {
+            const enabled = importEpubToggle.checked;
+
+            applyImportEpubPreference(enabled);
+
+            try {
+                localStorage.setItem(IMPORT_EPUB_STORAGE_KEY, enabled ? '1' : '0');
+            } catch (error) {
+                console.error('Não foi possível salvar a preferência de importação de EPUB:', error);
+            }
+        });
+    }
+
+    loadSavedImportEpubPreference();
 
     // ---------- Informações do app (via package.json) ----------
 
@@ -734,6 +879,47 @@ document.addEventListener('DOMContentLoaded', () => {
     // ---------- Envio do formulário (criação ou edição) ----------
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
+
+        if (importingEpubPath) {
+            // ---- Modo importação: descompacta um .epub num projeto novo ----
+
+            if (!pathInput.value) {
+                alert('Selecione uma pasta de destino antes de importar.');
+                return;
+            }
+
+            const dadosImportacao = {
+                title: titleInput.value,
+                author: authorInput.value,
+                language: langSelect.value,
+                description: descInput.value,
+                basePath: pathInput.value,
+                coverPath: selectedCoverPath,
+                epubPath: importingEpubPath
+            };
+
+            const result = await window.electronAPI.importarProjeto(dadosImportacao);
+
+            if (result && result.success) {
+                if (result.renamed) {
+                    showNotice(
+                        'Projeto renomeado',
+                        `Já existe um projeto chamado "${result.originalTitle}" no Dashboard. ` +
+                        `O projeto foi criado como "${result.title}".`,
+                        'Abrir projeto',
+                        () => openProject(result.path)
+                    );
+                    return;
+                }
+
+                openProject(result.path);
+                return;
+            }
+
+            console.error('Erro ao importar projeto:', result && result.error);
+            alert('Não foi possível importar o projeto: ' + ((result && result.error) || 'Erro desconhecido.'));
+            return;
+        }
 
         if (editingProjectPath) {
             // ---- Modo edição: atualiza um projeto já existente ----
