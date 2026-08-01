@@ -3838,7 +3838,7 @@ ${cleanHTML()}
                     maxHeight,
                     Math.max(
                         MIN_IMAGES_HEIGHT,
-                        startHeight + (event.clientY - startY)
+                        startHeight - (event.clientY - startY)
                     )
                 );
 
