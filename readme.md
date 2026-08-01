@@ -1,6 +1,6 @@
 # Editor de eBook
 
-**Versão 0.0.4** — Um aplicativo de desktop minimalista para escrever e exportar eBooks em **ePub** e **PDF**, com editor de texto rico, organização de capítulos, geração do `.epub` sem dependências externas de compressão e exportação para PDF com visualização fiel.
+**Versão 0.0.5** — Um aplicativo de desktop minimalista para escrever e exportar eBooks em **ePub** e **PDF**, com editor de texto rico, organização de capítulos, geração do `.epub` sem dependências externas de compressão e exportação para PDF com visualização fiel.
 
 Construído com **Electron**, **HTML**, **CSS** e **JavaScript puro** — sem frameworks de front-end.
 
@@ -18,6 +18,7 @@ A organização de código está documentada em [ARCHITECTURE.md](ARCHITECTURE.m
 ## Funcionalidades
 
 - **Gerenciamento de projetos** — crie, abra, edite e exclua projetos de eBook, cada um salvo em sua própria pasta local, com prevenção automática de duplicatas por título.
+- **Importação de EPUB** — importe um arquivo `.epub` existente: o app descompacta capítulos, imagens, estilos, fontes e capa num projeto novo, pronto para editar e reexportar.
 - **Capa personalizada** — arraste e solte ou selecione uma imagem de capa ao criar o projeto.
 - **Editor de metadados** — edite título, autor, idioma e descrição do projeto após a criação.
 - **Editor de texto** com:
@@ -42,6 +43,12 @@ A organização de código está documentada em [ARCHITECTURE.md](ARCHITECTURE.m
 - **Modo escuro/claro** com persistência da preferência do usuário (sem flash de tema ao carregar).
 - **Tela de configurações** com informações do app, versão, tecnologias usadas e link para o repositório.
 - **Sistema de fontes** — fontes Arial, Georgia, Inter e Times New Roman inclusas para renderização fiel nos formatos exportados, com suporte a importação de fontes externas.
+
+## Modo desenvolvedor
+
+O **modo desenvolvedor** serve para usuários que quiserem testar funcionalidades que ainda não estão prontas ou estáveis. Quando ativado, opções experimentais de desenvolvedor aparecem nas **Configurações**, permitindo habilitar recursos em teste antes do lançamento oficial.
+
+Para ativar ou desativar, **segure `Ctrl + D` no Dashboard por 3 segundos**. A preferência é salva e permanece ativa entre sessões.
 
 ## Telas
 
@@ -72,6 +79,23 @@ Gera um arquivo `.epub` válido contendo:
 
 ### PDF
 Gera um arquivo `.pdf` montando um HTML completo com CSS embutido, fontes inclusas e renderizado via `BrowserWindow` do Electron, preservando a formatação visual do editor.
+
+## Releases
+
+As releases são geradas automaticamente pelo GitHub Actions (`.github/workflows/release.yml`) quando uma tag `v*` é enviada. O processo:
+
+1. Confere se a tag corresponde à versão do `package.json` (ex.: tag `v0.0.5` → versão `0.0.5`).
+2. Instala dependências, roda os testes e gera os instaladores (Windows: NSIS + portable; Linux: AppImage + deb).
+3. Publica a release no GitHub com notas geradas automaticamente.
+
+Para publicar uma nova versão:
+
+```bash
+npm version patch
+git push --tags
+```
+
+> `npm version` atualiza a versão no `package.json`, cria o commit e a tag `vX.Y.Z` correspondente. Mantenha a versão do `readme.md` em sincronia.
 
 ## Status
 O projeto está em desenvolvimento ativo.

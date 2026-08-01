@@ -52,6 +52,13 @@
                     </svg>
                     <p>Abrir projeto</p>
                 </div>
+
+                <div class="card" id="btnImportEpub" role="button" tabindex="0" hidden>
+                    <svg xmlns="http://www.w3.org/2000/svg" height="32px" viewBox="0 -960 960 960" width="32px" fill="currentColor">
+                        <path d="M480-320 320-480l56-56 64 64v-328h80v328l64-64 56 56-160 160ZM240-160q-33 0-56.5-23.5T160-240v-120h80v120h480v-120h80v120q0 33-23.5 56.5T720-160H240Z"/>
+                    </svg>
+                    <p>Importar EPUB</p>
+                </div>
             </div>
         </section>
 
@@ -105,11 +112,11 @@
                             </select>
                         </div>
 
-                        <!-- Novo campo: Seleção de Pasta (só faz sentido ao criar um projeto novo) -->
+                        <!-- Campo de local: seleção de pasta ao criar; ao editar, apenas exibe o caminho do projeto -->
                         <div class="input-group" id="pathFieldGroup">
                             <label for="pathInput">Local</label>
                             <div class="input-with-button">
-                                <input type="text" id="pathInput" readonly placeholder="Selecione uma pasta..." value="C:\Documentos\eBooks">
+                                <input type="text" id="pathInput" readonly placeholder="Selecione uma pasta...">
                                 <button type="button" class="btn-icon" aria-label="Selecionar pasta" id="btnSelectFolder">
                                     <svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor">
                                         <path d="M160-160q-33 0-56.5-23.5T80-240v-480q0-33 23.5-56.5T160-800h240l80 80h320q33 0 56.5 23.5T880-640v400q0 33-23.5 56.5T800-160H160Zm0-80h640v-400H447l-80-80H160v480Zm0 0v-480 480Z"/>
@@ -170,8 +177,14 @@
                     </div>
                 </section>
 
-                <section class="settings-section">
-                    <h3>Editor</h3>
+                <section class="settings-section" id="devSettingsSection" hidden>
+                    <h3>Desenvolvedor</h3>
+                    <div class="settings-info-item theme-toggle-row">
+                        <div class="theme-toggle-text">
+                            <span class="settings-info-label">Modo desenvolvedor</span>
+                            <span class="settings-info-value" id="devModeStatusLabel">Desativado</span>
+                        </div>
+                    </div>
                     <div class="settings-info-item theme-toggle-row">
                         <div class="theme-toggle-text">
                             <span class="settings-info-label">Tamanho do arquivo de exportação</span>
@@ -182,6 +195,17 @@
                             <span class="switch-slider"></span>
                         </label>
                     </div>
+                    <div class="settings-info-item theme-toggle-row">
+                        <div class="theme-toggle-text">
+                            <span class="settings-info-label">Importar EPUB</span>
+                            <span class="settings-info-value" id="importEpubStatusLabel">Desativado</span>
+                        </div>
+                        <label class="switch" for="importEpubToggle">
+                            <input type="checkbox" id="importEpubToggle">
+                            <span class="switch-slider"></span>
+                        </label>
+                    </div>
+                    <p class="settings-dev-hint">Segure Ctrl + D no Dashboard por 3 segundos para desativar o modo desenvolvedor.</p>
                 </section>
 
                 <section class="settings-section">

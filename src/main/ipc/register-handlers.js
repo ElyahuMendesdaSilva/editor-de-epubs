@@ -1,16 +1,35 @@
-const { dialog, ipcMain } = require('electron');
+const { app, dialog, ipcMain, shell } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
 const fsSync = require('fs');
 const packageJson = require('../../../package.json');
 const { buildEpub } = require('../services/epub-exporter');
 const { buildPdf } = require('../services/pdf-exporter');
+const { parseEpub, importEpubIntoProject } = require('../services/epub-importer');
 const { addToRegistry, getRegistryPath } = require('../services/project-registry');
 const { closeVoidTags, readJSONSafe, sanitizeEntitiesForXml, sanitizeFolderName, writeJSON } = require('../utils/files');
 
 const ALLOWED_IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg'];
 const isAllowedImageExtension = (filePath) =>
     ALLOWED_IMAGE_EXTENSIONS.includes(path.extname(filePath).toLowerCase());
+
+// Id do capítulo de sumário gerado automaticamente pelo editor
+// (deve ser o mesmo usado em src/renderer/editor/editor.js).
+const TOC_CHAPTER_ID = 'sumario';
+
+// Fila de escrita do manifesto de capítulos, por projeto. Salvar e
+// excluir capítulos fazem leitura-modificação-escrita no mesmo
+// manifest.json; chamadas concorrentes (ex.: ao reordenar capítulos,
+// que grava todos de uma vez) poderiam sobrescrever edições mais
+// recentes. A fila serializa as gravações de cada projeto.
+const chapterManifestQueues = new Map();
+
+function enqueueChapterManifestWrite(projectPath, task) {
+    const previous = chapterManifestQueues.get(projectPath) || Promise.resolve();
+    const next = previous.then(task, task);
+    chapterManifestQueues.set(projectPath, next.catch(() => {}));
+    return next;
+}
 
 function normalizeProjectTitle(title) {
     return String(title || 'Sem título')
@@ -86,13 +105,25 @@ ipcMain.handle('obter-info-app', async () => {
 });
 
 
+ipcMain.handle('obter-diretorio-usuario', async () => {
+    try {
+        return {
+            success: true,
+            homeDir: app.getPath('home')
+        };
+    } catch (error) {
+        console.error('Erro ao obter o diretório do usuário:', error);
+        return { success: false, error: error.message };
+    }
+});
+
 ipcMain.handle('criar-projeto', async (event, dados) => {
     try {
-        const { title, author, language, description, basePath, coverPath } = dados;
+        const { title, author, language, description, coverPath } = dados;
 
-        if (!basePath) {
-            throw new Error('Nenhuma pasta de destino foi selecionada.');
-        }
+        // Se nenhuma pasta foi informada, usa a pasta do usuário
+        // (ex.: /home/usuario no Linux, C:\Users\usuario no Windows).
+        const basePath = dados.basePath || app.getPath('home');
 
         const existingTitles = getRegisteredProjectTitles();
         let finalTitle = String(title || 'Sem título').trim() || 'Sem título';
@@ -105,7 +136,7 @@ ipcMain.handle('criar-projeto', async (event, dados) => {
         }
 
         // Cria uma subpasta com o nome do livro dentro da pasta escolhida
-        // (ex: "C:\Documentos\eBooks\MeuLivro")
+        // (ex.: "/home/usuario/MeuLivro" no Linux, "C:\Users\usuario\MeuLivro" no Windows)
         const folderName = sanitizeFolderName(finalTitle);
         const projectDir = path.join(basePath, folderName);
 
@@ -140,6 +171,7 @@ ipcMain.handle('criar-projeto', async (event, dados) => {
             language: language || 'pt-BR',
             description: description || '',
             cover: coverFileName,
+            appVersion: packageJson.version || '',
             createdAt: new Date().toISOString(),
             chapters: []
         };
@@ -162,6 +194,134 @@ ipcMain.handle('criar-projeto', async (event, dados) => {
 
     } catch (error) {
         console.error('Erro ao criar projeto:', error);
+
+        return {
+            success: false,
+            error: error.message
+        };
+    }
+});
+
+// Abre o diálogo nativo para escolher um único arquivo .epub (usado
+// pelo botão "Importar EPUB" do Dashboard).
+ipcMain.handle('selecionar-epub', async () => {
+    try {
+        const dialogResult = await dialog.showOpenDialog({
+            title: 'Selecionar arquivo EPUB',
+            properties: ['openFile'],
+            filters: [
+                { name: 'Arquivos EPUB', extensions: ['epub'] }
+            ]
+        });
+
+        if (dialogResult.canceled || !dialogResult.filePaths || dialogResult.filePaths.length === 0) {
+            return { success: false, canceled: true };
+        }
+
+        return { success: true, path: dialogResult.filePaths[0] };
+
+    } catch (error) {
+        console.error('Erro ao selecionar EPUB:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// Lê os metadados de um .epub (título, autor, idioma, descrição e capa)
+// para pré-preencher o modal de importação do Dashboard.
+ipcMain.handle('obter-metadados-epub', async (event, epubPath) => {
+    try {
+        const parsed = await parseEpub(epubPath);
+
+        let coverDataUrl = null;
+
+        if (parsed.cover) {
+            const ext = path.extname(parsed.cover.file).toLowerCase();
+            const mime = ext === '.png'
+                ? 'image/png'
+                : ext === '.gif'
+                    ? 'image/gif'
+                    : ext === '.webp'
+                        ? 'image/webp'
+                        : 'image/jpeg';
+
+            coverDataUrl = `data:${mime};base64,${parsed.cover.data.toString('base64')}`;
+        }
+
+        return {
+            success: true,
+            title: parsed.title,
+            author: parsed.author,
+            language: parsed.language,
+            description: parsed.description,
+            coverDataUrl
+        };
+
+    } catch (error) {
+        console.error('Erro ao ler metadados do EPUB:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// Cria um projeto novo a partir de um arquivo .epub: monta a pasta do
+// projeto, descompacta capítulos/imagens/estilos/fontes do epub dentro
+// dela e salva o project.json (mesma estrutura de um projeto criado
+// pelo modal "Novo eBook").
+ipcMain.handle('importar-projeto', async (event, dados) => {
+    try {
+        const { title, author, language, description, basePath, coverPath, epubPath } = dados;
+
+        if (!epubPath) {
+            throw new Error('Nenhum arquivo .epub foi selecionado.');
+        }
+
+        if (!fsSync.existsSync(epubPath)) {
+            throw new Error('O arquivo .epub não existe.');
+        }
+
+        const metadata = await parseEpub(epubPath);
+
+        const existingTitles = getRegisteredProjectTitles();
+        let finalTitle = String(title || metadata.title || 'Sem título').trim() || 'Sem título';
+        let renamed = false;
+        let originalTitle = finalTitle;
+
+        if (existingTitles.has(normalizeProjectTitle(finalTitle))) {
+            finalTitle = getAvailableProjectTitle(finalTitle, existingTitles);
+            renamed = true;
+        }
+
+        const base = basePath || app.getPath('home');
+        const folderName = sanitizeFolderName(finalTitle);
+        const projectDir = path.join(base, folderName);
+
+        if (fsSync.existsSync(path.join(projectDir, 'project.json'))) {
+            return {
+                success: false,
+                code: 'DUPLICATE_PROJECT_FOLDER',
+                error: 'Já existe um projeto nessa pasta.'
+            };
+        }
+
+        await importEpubIntoProject(epubPath, projectDir, {
+            title: finalTitle,
+            author: author || metadata.author,
+            language: language || metadata.language,
+            description: description || metadata.description,
+            coverPath
+        });
+
+        await addToRegistry(projectDir);
+
+        return {
+            success: true,
+            path: projectDir,
+            renamed: renamed,
+            originalTitle: originalTitle,
+            title: finalTitle
+        };
+
+    } catch (error) {
+        console.error('Erro ao importar projeto:', error);
 
         return {
             success: false,
@@ -222,7 +382,8 @@ ipcMain.handle('atualizar-projeto', async (event, dados) => {
             author: author || '',
             language: language || projectData.language || 'pt-BR',
             description: description || '',
-            cover: coverFileName
+            cover: coverFileName,
+            appVersion: packageJson.version || ''
         };
 
         await fs.writeFile(
@@ -276,6 +437,32 @@ ipcMain.handle('excluir-projeto', async (event, projectPath) => {
     }
 });
 
+
+// Abre o gerenciador de arquivos do sistema na pasta do projeto (usado
+// pelo botão de pasta do modal de edição do dashboard).
+ipcMain.handle('abrir-pasta-projeto', async (event, projectPath) => {
+    try {
+        if (!projectPath) {
+            throw new Error('Nenhum projeto informado.');
+        }
+
+        if (!fsSync.existsSync(projectPath)) {
+            throw new Error('A pasta do projeto não existe.');
+        }
+
+        const errorMessage = await shell.openPath(projectPath);
+
+        if (errorMessage) {
+            throw new Error(errorMessage);
+        }
+
+        return { success: true };
+
+    } catch (error) {
+        console.error('Erro ao abrir pasta do projeto:', error);
+        return { success: false, error: error.message };
+    }
+});
 
 ipcMain.handle('selecionar-pasta', async () => {
     const result = await dialog.showOpenDialog({
@@ -425,21 +612,26 @@ ipcMain.handle('copiar-imagens', async (event, { projectPath, imagePaths }) => {
 
 
 // Salva um capítulo como .xhtml em chapters/ e atualiza o manifesto + project.json
-ipcMain.handle('salvar-capitulo', async (event, { projectPath, chapterId, title, html, order }) => {
-    try {
-        if (!projectPath) {
-            throw new Error('Nenhum projeto aberto.');
-        }
+ipcMain.handle('salvar-capitulo', (event, dados) => {
+    const { projectPath } = dados;
 
-        const chaptersDir = path.join(projectPath, 'chapters');
-        await fs.mkdir(chaptersDir, { recursive: true });
+    if (!projectPath) {
+        return Promise.resolve({ success: false, error: 'Nenhum projeto aberto.' });
+    }
 
-        const fileName = `${chapterId}.xhtml`;
-        const filePath = path.join(chaptersDir, fileName);
+    return enqueueChapterManifestWrite(projectPath, async () => {
+        try {
+            const { chapterId, title, html, order, number } = dados;
 
-        const bodyHtml = closeVoidTags(sanitizeEntitiesForXml(html));
+            const chaptersDir = path.join(projectPath, 'chapters');
+            await fs.mkdir(chaptersDir, { recursive: true });
 
-        const xhtml = `<?xml version="1.0" encoding="utf-8"?>
+            const fileName = `${chapterId}.xhtml`;
+            const filePath = path.join(chaptersDir, fileName);
+
+            const bodyHtml = closeVoidTags(sanitizeEntitiesForXml(html));
+
+            const xhtml = `<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" lang="pt-BR">
 <head>
@@ -453,74 +645,96 @@ ${bodyHtml}
 </html>
 `;
 
-        await fs.writeFile(filePath, xhtml, 'utf-8');
+            await fs.writeFile(filePath, xhtml, 'utf-8');
 
-        // Atualiza o manifesto de capítulos (chapters/manifest.json)
-        const manifestPath = path.join(chaptersDir, 'manifest.json');
-        const manifest = readJSONSafe(manifestPath, []);
+            // Atualiza o manifesto de capítulos (chapters/manifest.json)
+            const manifestPath = path.join(chaptersDir, 'manifest.json');
+            const manifest = readJSONSafe(manifestPath, []);
 
-        const existingIndex = manifest.findIndex(item => item.id === chapterId);
-        const entry = { id: chapterId, title: title || 'Capítulo', file: fileName, order: order || 0 };
+            const existingIndex = manifest.findIndex(item => item.id === chapterId);
+            const entry = { id: chapterId, title: title || 'Capítulo', file: fileName, order: order || 0 };
 
-        if (existingIndex >= 0) {
-            manifest[existingIndex] = entry;
-        } else {
-            manifest.push(entry);
+            if (number != null) {
+                entry.number = number;
+            }
+
+            if (existingIndex >= 0) {
+                manifest[existingIndex] = entry;
+            } else {
+                manifest.push(entry);
+            }
+
+            manifest.sort((a, b) => a.order - b.order);
+
+            await writeJSON(manifestPath, manifest);
+
+            // Espelha o resumo no project.json, para consulta rápida
+            const projectJsonPath = path.join(projectPath, 'project.json');
+            const projectData = readJSONSafe(projectJsonPath, {});
+            projectData.chapters = manifest;
+
+            // Sumário (re)criado ou atualizado: limpa a marca de "excluído".
+            if (chapterId === TOC_CHAPTER_ID) {
+                delete projectData.tocDeleted;
+            }
+
+            await writeJSON(projectJsonPath, projectData);
+
+            return { success: true, file: fileName };
+
+        } catch (error) {
+            console.error('Erro ao salvar capítulo:', error);
+            return { success: false, error: error.message };
         }
-
-        manifest.sort((a, b) => a.order - b.order);
-
-        await writeJSON(manifestPath, manifest);
-
-        // Espelha o resumo no project.json, para consulta rápida
-        const projectJsonPath = path.join(projectPath, 'project.json');
-        const projectData = readJSONSafe(projectJsonPath, {});
-        projectData.chapters = manifest;
-        await writeJSON(projectJsonPath, projectData);
-
-        return { success: true, file: fileName };
-
-    } catch (error) {
-        console.error('Erro ao salvar capítulo:', error);
-        return { success: false, error: error.message };
-    }
+    });
 });
 
 
 // Remove o .xhtml do capítulo e atualiza os manifestos
-ipcMain.handle('excluir-capitulo', async (event, { projectPath, chapterId }) => {
-    try {
-        if (!projectPath) {
-            throw new Error('Nenhum projeto aberto.');
-        }
+ipcMain.handle('excluir-capitulo', (event, dados) => {
+    const { projectPath, chapterId } = dados;
 
-        const chaptersDir = path.join(projectPath, 'chapters');
-        const manifestPath = path.join(chaptersDir, 'manifest.json');
-        const manifest = readJSONSafe(manifestPath, []);
-
-        const entry = manifest.find(item => item.id === chapterId);
-
-        if (entry) {
-            const filePath = path.join(chaptersDir, entry.file);
-            if (fsSync.existsSync(filePath)) {
-                await fs.unlink(filePath);
-            }
-        }
-
-        const updatedManifest = manifest.filter(item => item.id !== chapterId);
-        await writeJSON(manifestPath, updatedManifest);
-
-        const projectJsonPath = path.join(projectPath, 'project.json');
-        const projectData = readJSONSafe(projectJsonPath, {});
-        projectData.chapters = updatedManifest;
-        await writeJSON(projectJsonPath, projectData);
-
-        return { success: true };
-
-    } catch (error) {
-        console.error('Erro ao excluir capítulo:', error);
-        return { success: false, error: error.message };
+    if (!projectPath) {
+        return Promise.resolve({ success: false, error: 'Nenhum projeto aberto.' });
     }
+
+    return enqueueChapterManifestWrite(projectPath, async () => {
+        try {
+            const chaptersDir = path.join(projectPath, 'chapters');
+            const manifestPath = path.join(chaptersDir, 'manifest.json');
+            const manifest = readJSONSafe(manifestPath, []);
+
+            const entry = manifest.find(item => item.id === chapterId);
+
+            if (entry) {
+                const filePath = path.join(chaptersDir, entry.file);
+                if (fsSync.existsSync(filePath)) {
+                    await fs.unlink(filePath);
+                }
+            }
+
+            const updatedManifest = manifest.filter(item => item.id !== chapterId);
+            await writeJSON(manifestPath, updatedManifest);
+
+            const projectJsonPath = path.join(projectPath, 'project.json');
+            const projectData = readJSONSafe(projectJsonPath, {});
+            projectData.chapters = updatedManifest;
+
+            // Excluir o sumário marca o projeto para que ele não seja
+            // recriado sozinho na próxima abertura (só via Ctrl + L).
+            if (chapterId === TOC_CHAPTER_ID) {
+                projectData.tocDeleted = true;
+            }
+
+            await writeJSON(projectJsonPath, projectData);
+
+            return { success: true };
+
+        } catch (error) {
+            console.error('Erro ao excluir capítulo:', error);
+            return { success: false, error: error.message };
+        }
+    });
 });
 
 
@@ -561,7 +775,8 @@ ipcMain.handle('listar-projetos', async () => {
                 author: data.author || '',
                 language: data.language || 'pt-BR',
                 description: data.description || '',
-                cover: coverUrl
+                cover: coverUrl,
+                appVersion: data.appVersion || ''
             });
         }
 
@@ -621,7 +836,8 @@ ipcMain.handle('carregar-projeto', async (event, projectPath) => {
             chapters.push({
                 id: entry.id,
                 title: entry.title,
-                html
+                html,
+                number: entry.number
             });
         }
 

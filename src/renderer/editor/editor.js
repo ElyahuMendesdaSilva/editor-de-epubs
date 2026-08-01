@@ -166,6 +166,11 @@
         { id: 'ch-1', title: 'Capítulo 1', html: DEFAULT_HTML }
     ];
 
+    // Quando true, o usuário excluiu o sumário de propósito: ele não
+    // deve ser recriado automaticamente ao reabrir o projeto (só com
+    // Ctrl + L). Valor lido do project.json ao carregar o projeto.
+    let tocDeleted = false;
+
     let activeChapterId = chapters[0].id;
 
     // Id do capítulo sendo arrastado na barra lateral, enquanto o
@@ -407,6 +412,115 @@
         return div.innerHTML;
     }
 
+    // ---------- Sumário (capítulo automático) ----------
+
+    // O sumário é um capítulo especial, gerado automaticamente a partir
+    // dos demais capítulos. Quando criado, entra como o último capítulo,
+    // mas pode ser reposicionado pelo usuário como qualquer outro. O id
+    // fixo permite reconhecê-lo mesmo depois de fechar/reabrir o projeto;
+    // se o usuário excluí-lo, Ctrl + L o recria do zero.
+    const TOC_CHAPTER_ID = 'sumario';
+
+    function getTocChapter() {
+
+        return chapters.find(
+            chapter => chapter.id === TOC_CHAPTER_ID
+        ) || null;
+    }
+
+    function buildTocHtml() {
+
+        const entries = [];
+        let numberedIndex = 0;
+
+        for (const chapter of chapters) {
+            if (chapter.id === TOC_CHAPTER_ID) {
+                continue;
+            }
+
+            const number = chapter.number != null
+                ? chapter.number
+                : numberedIndex + 1;
+
+            numberedIndex += 1;
+
+            entries.push({ chapter, number });
+        }
+
+        // O sumário é ordenado pelo número do capítulo, para a lista
+        // ficar em ordem crescente independentemente da posição dos
+        // capítulos na barra lateral.
+        entries.sort((a, b) => a.number - b.number);
+
+        const items = entries.map(({ chapter, number }) =>
+            `    <li><a href="${escapeHtmlText(chapter.id)}.xhtml">${number} — ${escapeHtmlText(chapter.title)}</a></li>`
+        );
+
+        if (items.length === 0) {
+            return '<h1>Sumário</h1>\n<p>Nenhum capítulo ainda.</p>';
+        }
+
+        return '<h1>Sumário</h1>\n<ol style="list-style: none; padding-left: 0;">\n' + items.join('\n') + '\n</ol>';
+    }
+
+    // Cria o sumário como último capítulo, caso ainda não exista. Com
+    // force=true (Ctrl + L) ignora a marca tocDeleted e recria mesmo
+    // que o usuário tenha excluído o sumário antes.
+    function ensureTocChapter(force = false) {
+
+        const existingToc = getTocChapter();
+
+        if (existingToc) {
+
+            // Migra sumários salvos em formato antigo (ex.: marcadores
+            // numéricos via atributo value, que truncam decimais).
+            const regeneratedHtml = buildTocHtml();
+
+            if (existingToc.html !== regeneratedHtml) {
+                existingToc.html = regeneratedHtml;
+                persistChapter(existingToc);
+            }
+
+            return;
+        }
+
+        if (!force && tocDeleted) {
+            return;
+        }
+
+        const tocChapter = {
+            id: TOC_CHAPTER_ID,
+            title: 'Sumário',
+            html: buildTocHtml()
+        };
+
+        chapters.push(tocChapter);
+
+        tocDeleted = false;
+
+        persistChapter(tocChapter);
+    }
+
+    // Regenera o conteúdo do sumário a partir dos capítulos atuais e
+    // grava no disco. Se o sumário estiver aberto na tela, atualiza a
+    // prévia também.
+    function syncTocInChapters() {
+
+        const tocChapter = getTocChapter();
+
+        if (!tocChapter) {
+            return;
+        }
+
+        tocChapter.html = buildTocHtml();
+
+        persistChapter(tocChapter);
+
+        if (activeChapterId === TOC_CHAPTER_ID) {
+            editor.innerHTML = relativeToAbsoluteImages(tocChapter.html);
+        }
+    }
+
 
     // Guarda o conteúdo atual do editor no capítulo ativo, antes de trocar
     function saveActiveChapterContent() {
@@ -442,7 +556,8 @@
             chapterId: chapter.id,
             title: chapter.title,
             html: chapter.html,
-            order
+            order,
+            number: chapter.number
         });
 
         if (!result || !result.success) {
@@ -536,15 +651,39 @@
 
         saveActiveChapterContent();
 
-        const number = chapters.length + 1;
+        // O sumário não conta como capítulo para a numeração. O próximo
+        // número é o maior já exibido, arredondado para o inteiro fechado
+        // (2.5 -> 3, 3.8 -> 4) e + 1 quando o maior já é inteiro, para
+        // não colidir com números editados manualmente pelo usuário.
+        const numbers = [];
+        let numberedIndex = 0;
+
+        for (const chapter of chapters) {
+            if (chapter.id === TOC_CHAPTER_ID) {
+                continue;
+            }
+            numbers.push(chapter.number != null ? chapter.number : numberedIndex + 1);
+            numberedIndex += 1;
+        }
+
+        const maxNumber = numbers.length > 0
+            ? Math.max(...numbers)
+            : 0;
+
+        const number = Number.isInteger(maxNumber)
+            ? maxNumber + 1
+            : Math.ceil(maxNumber);
 
         const newChapter = {
             id: generateChapterId(),
+            number,
             title: `Capítulo ${number}`,
             html: `<h1>Capítulo ${number}</h1>\n<p>Comece a escrever...</p>`
         };
 
         chapters.push(newChapter);
+
+        syncTocInChapters();
 
         activeChapterId = newChapter.id;
 
@@ -579,6 +718,13 @@
 
         deleteChapterFromDisk(id);
 
+        if (id === TOC_CHAPTER_ID) {
+            // Excluído pelo usuário: não recria sozinho na próxima abertura.
+            tocDeleted = true;
+        } else {
+            syncTocInChapters();
+        }
+
         if (activeChapterId === id) {
 
             const nextIndex = Math.max(0, index - 1);
@@ -604,10 +750,17 @@
             chapter => chapter.id === id
         );
 
-        if (chapter && newTitle.trim()) {
+        // O sumário é gerado automaticamente: não pode ser renomeado.
+        if (!chapter || chapter.id === TOC_CHAPTER_ID) {
+            return;
+        }
+
+        if (newTitle.trim()) {
             chapter.title = newTitle.trim();
             persistChapter(chapter);
         }
+
+        syncTocInChapters();
 
         renderChapterList();
 
@@ -652,11 +805,17 @@
         // que a nova ordem sobreviva a um fechar/abrir do projeto.
         chapters.forEach(chapter => persistChapter(chapter));
 
+        syncTocInChapters();
+
         renderChapterList();
     }
 
 
     function startRename(itemEl, chapter) {
+
+        if (chapter.id === TOC_CHAPTER_ID) {
+            return;
+        }
 
         const nameSpan = itemEl.querySelector('.chapter-name');
 
@@ -692,6 +851,71 @@
     }
 
 
+    // Edita o número do capítulo (duplo clique no número na barra
+    // lateral), no mesmo estilo da edição de título.
+    function startRenameNumber(numberEl, chapter) {
+
+        // Com um único capítulo o número não pode ser alterado.
+        const realChaptersCount = chapters.filter(
+            item => item.id !== TOC_CHAPTER_ID
+        ).length;
+
+        if (chapter.id === TOC_CHAPTER_ID || realChaptersCount <= 1) {
+            return;
+        }
+
+        const originalValue = chapter.number != null
+            ? String(chapter.number)
+            : '';
+
+        const input = document.createElement('input');
+
+        input.type = 'text';
+        input.inputMode = 'numeric';
+        input.className = 'chapter-number-input';
+        input.value = originalValue;
+
+        numberEl.replaceWith(input);
+
+        input.focus();
+        input.select();
+
+        function commit() {
+
+            const rawValue = input.value.trim();
+
+            // Só aceita números positivos (inteiros ou decimais, ex. 2.5):
+            // qualquer outra coisa mantém o número atual do capítulo.
+            if (/^\d+(\.\d+)?$/.test(rawValue)) {
+
+                const parsed = parseFloat(rawValue);
+
+                if (parsed > 0 && parsed !== chapter.number) {
+                    chapter.number = parsed;
+                    persistChapter(chapter);
+                    syncTocInChapters();
+                }
+            }
+
+            renderChapterList();
+        }
+
+        input.addEventListener('blur', commit);
+
+        input.addEventListener('keydown', event => {
+
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                input.blur();
+            }
+
+            if (event.key === 'Escape') {
+                input.value = originalValue;
+                input.blur();
+            }
+        });
+    }
+
     function renderChapterList() {
 
         if (!chapterListEl) {
@@ -700,7 +924,17 @@
 
         chapterListEl.innerHTML = '';
 
-        chapters.forEach(chapter => {
+        const realChaptersCount = chapters.filter(
+            chapter => chapter.id !== TOC_CHAPTER_ID
+        ).length;
+
+        chapters.forEach((chapter, index) => {
+
+            const isTocChapter = chapter.id === TOC_CHAPTER_ID;
+            const canEditNumber = realChaptersCount > 1 && !isTocChapter;
+            const chapterNumber = isTocChapter
+                ? null
+                : (chapter.number != null ? chapter.number : index + 1);
 
             const item = document.createElement('div');
 
@@ -720,8 +954,16 @@
                         <circle cx="15" cy="18" r="1.6"/>
                     </svg>
                 </span>
+                ${isTocChapter
+                    ? ''
+                    : `<span class="chapter-number" title="${canEditNumber
+                        ? 'Número do capítulo (duplo clique para editar)'
+                        : 'Número do capítulo'}">${chapterNumber}</span>`}
                 <svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6z"/><path d="M14 3v4h4"/></svg>
                 <span class="chapter-name">${escapeHtmlText(chapter.title)}</span>
+                ${isTocChapter
+                    ? '<span class="chapter-toc-badge" title="Sumário automático (Ctrl + L recria se excluído)">TOC</span>'
+                    : ''}
                 <button class="chapter-delete" type="button" title="Excluir capítulo">
                     <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
                 </button>
@@ -744,6 +986,19 @@
 
                 startRename(item, chapter);
             });
+
+            const numberEl = item.querySelector('.chapter-number');
+
+            if (numberEl && canEditNumber) {
+
+                numberEl.addEventListener('dblclick', event => {
+
+                    // Só edita o número; não abre a edição do título.
+                    event.stopPropagation();
+
+                    startRenameNumber(numberEl, chapter);
+                });
+            }
 
             const deleteBtn = item.querySelector('.chapter-delete');
 
@@ -867,6 +1122,48 @@
                 addChapter
             );
         }
+
+        // Ctrl + L recria o sumário caso ele tenha sido excluído.
+        document.addEventListener('keydown', event => {
+
+            const modifier = event.ctrlKey || event.metaKey;
+
+            if (!modifier || event.key.toLowerCase() !== 'l') {
+                return;
+            }
+
+            event.preventDefault();
+
+            if (getTocChapter()) {
+                return;
+            }
+
+            ensureTocChapter(true);
+
+            renderChapterList();
+
+            updateChapterHeaderLabels();
+        });
+
+        // Cliques nos links do sumário navegam para o capítulo
+        // correspondente dentro do próprio editor.
+        editor.addEventListener('click', event => {
+
+            const link = event.target.closest('a');
+
+            if (!link) {
+                return;
+            }
+
+            const href = (link.getAttribute('href') || '').trim();
+
+            const chapterId = href.replace(/\.xhtml$/, '');
+
+            if (chapterId && chapters.some(chapter => chapter.id === chapterId)) {
+                event.preventDefault();
+                loadChapter(chapterId);
+            }
+        });
 
         renderChapterList();
 
@@ -4791,13 +5088,22 @@ ${cleanHTML()}
             chapters = result.chapters.map(chapter => ({
                 id: chapter.id,
                 title: chapter.title || 'Capítulo',
-                html: chapter.html || ''
+                html: chapter.html || '',
+                number: chapter.number
             }));
         } else {
             chapters = [
                 { id: generateChapterId(), title: 'Capítulo 1', html: DEFAULT_HTML }
             ];
         }
+
+        // Garante o sumário como último capítulo: projetos novos recebem
+        // o capítulo na primeira abertura e projetos antigos que não o
+        // têm ganham na próxima vez que forem abertos — a menos que o
+        // usuário tenha excluído o sumário de propósito (tocDeleted).
+        tocDeleted = !!(result.project && result.project.tocDeleted);
+
+        ensureTocChapter();
 
         activeChapterId = chapters[0].id;
 

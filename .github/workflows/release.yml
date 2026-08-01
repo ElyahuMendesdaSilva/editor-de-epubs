@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check tag matches package.json version
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          VERSION="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$VERSION" ]; then
+            echo "::error::A tag '${GITHUB_REF_NAME}' não corresponde à versão '${VERSION}' do package.json."
+            exit 1
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build and publish
+        run: npx electron-builder --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate release notes
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          TAG="${{ github.ref_name }}"
+          gh api \
+            --method POST \
+            "/repos/${{ github.repository }}/releases/generate-notes" \
+            -f tag_name="$TAG" \
+            --jq '.body' > release-notes.md
+          gh release edit "$TAG" --notes-file release-notes.md --draft=false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
