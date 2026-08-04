@@ -44,12 +44,6 @@ A organização de código está documentada em [ARCHITECTURE.md](ARCHITECTURE.m
 - **Tela de configurações** com informações do app, versão, tecnologias usadas e link para o repositório.
 - **Sistema de fontes** — fontes Arial, Georgia, Inter e Times New Roman inclusas para renderização fiel nos formatos exportados, com suporte a importação de fontes externas.
 
-## Modo desenvolvedor
-
-O **modo desenvolvedor** serve para usuários que quiserem testar funcionalidades que ainda não estão prontas ou estáveis. Quando ativado, opções experimentais de desenvolvedor aparecem nas **Configurações**, permitindo habilitar recursos em teste antes do lançamento oficial.
-
-Para ativar ou desativar, **segure `Ctrl + D` no Dashboard por 3 segundos**. A preferência é salva e permanece ativa entre sessões.
-
 ## Telas
 
 | Tela | Descrição |

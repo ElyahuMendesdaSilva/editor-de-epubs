@@ -14,7 +14,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
         return file.path || null;
     },
     selecionarPasta: () => ipcRenderer.invoke('selecionar-pasta'),
-    abrirPastaProjeto: (projectPath) => ipcRenderer.invoke('abrir-pasta-projeto', projectPath),
     abrirProjeto: () => ipcRenderer.invoke('abrir-projeto'),
     obterInfoApp: () => ipcRenderer.invoke('obter-info-app'),
     obterDiretorioUsuario: () => ipcRenderer.invoke('obter-diretorio-usuario'),

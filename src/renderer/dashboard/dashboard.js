@@ -126,7 +126,6 @@ document.addEventListener('DOMContentLoaded', () => {
         submitProjectBtn.textContent = 'Salvar';
         pathFieldGroup.hidden = false;
         btnSelectFolder.hidden = false;
-        btnSelectFolder.title = 'Selecionar pasta';
 
         if (!defaultProjectPath) {
             await loadDefaultProjectPath();
@@ -151,7 +150,6 @@ document.addEventListener('DOMContentLoaded', () => {
         submitProjectBtn.textContent = 'Importar';
         pathFieldGroup.hidden = false;
         btnSelectFolder.hidden = false;
-        btnSelectFolder.title = 'Selecionar pasta';
 
         if (!defaultProjectPath) {
             await loadDefaultProjectPath();
@@ -194,13 +192,11 @@ document.addEventListener('DOMContentLoaded', () => {
         submitProjectBtn.textContent = 'Salvar alterações';
 
         // O local do projeto é exibido apenas para consulta (mudar de
-        // pasta exigiria mover a pasta inteira no disco). O botão de
-        // pasta, nesse modo, abre o gerenciador de arquivos do sistema
-        // na pasta do projeto.
+        // pasta exigiria mover a pasta inteira no disco), então o botão
+        // de selecionar pasta fica oculto nesse modo.
         pathFieldGroup.hidden = false;
         pathInput.value = project.path || '';
-        btnSelectFolder.hidden = false;
-        btnSelectFolder.title = 'Abrir pasta do projeto';
+        btnSelectFolder.hidden = true;
 
         titleInput.value = project.title || '';
         authorInput.value = project.author || '';
@@ -237,7 +233,6 @@ document.addEventListener('DOMContentLoaded', () => {
         coverDropzone.classList.remove('has-image');
         pathFieldGroup.hidden = false;
         btnSelectFolder.hidden = false;
-        btnSelectFolder.title = 'Selecionar pasta';
 
         if (btnDeleteProject) {
             btnDeleteProject.hidden = true;
@@ -330,16 +325,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     btnSelectFolder.addEventListener('click', async () => {
-
-        // No modo de edição, o botão abre a pasta do projeto no
-        // gerenciador de arquivos do sistema.
-        if (editingProjectPath) {
-            await window.electronAPI.abrirPastaProjeto(editingProjectPath);
-            return;
-        }
-
         const selectedPath = await window.electronAPI.selecionarPasta();
-
         if (selectedPath) {
             pathInput.value = selectedPath;
         }
@@ -771,43 +757,6 @@ document.addEventListener('DOMContentLoaded', () => {
         return div.innerHTML;
     }
 
-    // Projetos criados com versões do app menores que essa recebem
-    // um aviso no card (versões ausentes contam como antigas).
-    const MIN_PROJECT_APP_VERSION = [0, 0, 5];
-
-    function parseAppVersion(version) {
-        if (typeof version !== 'string' || !version.trim()) {
-            return null;
-        }
-
-        const parts = version.trim().split('.').map(Number);
-
-        if (parts.length < 3 || parts.some(part => Number.isNaN(part))) {
-            return null;
-        }
-
-        return parts.slice(0, 3);
-    }
-
-    function isProjectVersionOutdated(version) {
-        const parsed = parseAppVersion(version);
-
-        if (!parsed) {
-            return true;
-        }
-
-        for (let i = 0; i < MIN_PROJECT_APP_VERSION.length; i++) {
-            if (parsed[i] < MIN_PROJECT_APP_VERSION[i]) {
-                return true;
-            }
-            if (parsed[i] > MIN_PROJECT_APP_VERSION[i]) {
-                return false;
-            }
-        }
-
-        return false;
-    }
-
     function openProject(projectPath) {
         window.location.href = 'src/renderer/editor/editor.html?project=' + encodeURIComponent(projectPath);
     }
@@ -846,21 +795,8 @@ document.addEventListener('DOMContentLoaded', () => {
                        </svg>
                    </div>`;
 
-            const outdated = isProjectVersionOutdated(project.appVersion);
-            const warningBadge = outdated
-                ? `<span class="project-card-warning" title="${project.appVersion
-                        ? 'Projeto criado com a versão ' + escapeHtmlText(project.appVersion) + ' do aplicativo'
-                        : 'Projeto criado com uma versão antiga do aplicativo'}">
-                       <svg viewBox="0 0 24 24">
-                           <path d="M480-280q17 0 28.5-11.5T520-320q0-17-11.5-28.5T480-360q-17 0-28.5 11.5T440-320q0 17 11.5 28.5T480-280Zm-40-160h80v-240h-80v240ZM330-120 120-330v-300l210-210h300l210 210v300L630-120H330Z" />
-                       </svg>
-                       <span>Versão antiga</span>
-                   </span>`
-                : '';
-
             card.innerHTML = `
                 ${coverHtml}
-                ${warningBadge}
                 <div class="project-card-title-row">
                     <p>${escapeHtmlText(project.title)}</p>
                     <button type="button" class="project-edit-btn" title="Editar projeto" aria-label="Editar projeto">

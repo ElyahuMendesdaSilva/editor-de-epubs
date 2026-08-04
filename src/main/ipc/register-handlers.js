@@ -1,4 +1,4 @@
-const { app, dialog, ipcMain, shell } = require('electron');
+const { app, dialog, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
 const fsSync = require('fs');
@@ -12,24 +12,6 @@ const { closeVoidTags, readJSONSafe, sanitizeEntitiesForXml, sanitizeFolderName,
 const ALLOWED_IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg'];
 const isAllowedImageExtension = (filePath) =>
     ALLOWED_IMAGE_EXTENSIONS.includes(path.extname(filePath).toLowerCase());
-
-// Id do capítulo de sumário gerado automaticamente pelo editor
-// (deve ser o mesmo usado em src/renderer/editor/editor.js).
-const TOC_CHAPTER_ID = 'sumario';
-
-// Fila de escrita do manifesto de capítulos, por projeto. Salvar e
-// excluir capítulos fazem leitura-modificação-escrita no mesmo
-// manifest.json; chamadas concorrentes (ex.: ao reordenar capítulos,
-// que grava todos de uma vez) poderiam sobrescrever edições mais
-// recentes. A fila serializa as gravações de cada projeto.
-const chapterManifestQueues = new Map();
-
-function enqueueChapterManifestWrite(projectPath, task) {
-    const previous = chapterManifestQueues.get(projectPath) || Promise.resolve();
-    const next = previous.then(task, task);
-    chapterManifestQueues.set(projectPath, next.catch(() => {}));
-    return next;
-}
 
 function normalizeProjectTitle(title) {
     return String(title || 'Sem título')
@@ -171,7 +153,6 @@ ipcMain.handle('criar-projeto', async (event, dados) => {
             language: language || 'pt-BR',
             description: description || '',
             cover: coverFileName,
-            appVersion: packageJson.version || '',
             createdAt: new Date().toISOString(),
             chapters: []
         };
@@ -382,8 +363,7 @@ ipcMain.handle('atualizar-projeto', async (event, dados) => {
             author: author || '',
             language: language || projectData.language || 'pt-BR',
             description: description || '',
-            cover: coverFileName,
-            appVersion: packageJson.version || ''
+            cover: coverFileName
         };
 
         await fs.writeFile(
@@ -437,32 +417,6 @@ ipcMain.handle('excluir-projeto', async (event, projectPath) => {
     }
 });
 
-
-// Abre o gerenciador de arquivos do sistema na pasta do projeto (usado
-// pelo botão de pasta do modal de edição do dashboard).
-ipcMain.handle('abrir-pasta-projeto', async (event, projectPath) => {
-    try {
-        if (!projectPath) {
-            throw new Error('Nenhum projeto informado.');
-        }
-
-        if (!fsSync.existsSync(projectPath)) {
-            throw new Error('A pasta do projeto não existe.');
-        }
-
-        const errorMessage = await shell.openPath(projectPath);
-
-        if (errorMessage) {
-            throw new Error(errorMessage);
-        }
-
-        return { success: true };
-
-    } catch (error) {
-        console.error('Erro ao abrir pasta do projeto:', error);
-        return { success: false, error: error.message };
-    }
-});
 
 ipcMain.handle('selecionar-pasta', async () => {
     const result = await dialog.showOpenDialog({
@@ -612,26 +566,21 @@ ipcMain.handle('copiar-imagens', async (event, { projectPath, imagePaths }) => {
 
 
 // Salva um capítulo como .xhtml em chapters/ e atualiza o manifesto + project.json
-ipcMain.handle('salvar-capitulo', (event, dados) => {
-    const { projectPath } = dados;
+ipcMain.handle('salvar-capitulo', async (event, { projectPath, chapterId, title, html, order }) => {
+    try {
+        if (!projectPath) {
+            throw new Error('Nenhum projeto aberto.');
+        }
 
-    if (!projectPath) {
-        return Promise.resolve({ success: false, error: 'Nenhum projeto aberto.' });
-    }
+        const chaptersDir = path.join(projectPath, 'chapters');
+        await fs.mkdir(chaptersDir, { recursive: true });
 
-    return enqueueChapterManifestWrite(projectPath, async () => {
-        try {
-            const { chapterId, title, html, order, number } = dados;
+        const fileName = `${chapterId}.xhtml`;
+        const filePath = path.join(chaptersDir, fileName);
 
-            const chaptersDir = path.join(projectPath, 'chapters');
-            await fs.mkdir(chaptersDir, { recursive: true });
+        const bodyHtml = closeVoidTags(sanitizeEntitiesForXml(html));
 
-            const fileName = `${chapterId}.xhtml`;
-            const filePath = path.join(chaptersDir, fileName);
-
-            const bodyHtml = closeVoidTags(sanitizeEntitiesForXml(html));
-
-            const xhtml = `<?xml version="1.0" encoding="utf-8"?>
+        const xhtml = `<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" lang="pt-BR">
 <head>
@@ -645,96 +594,74 @@ ${bodyHtml}
 </html>
 `;
 
-            await fs.writeFile(filePath, xhtml, 'utf-8');
+        await fs.writeFile(filePath, xhtml, 'utf-8');
 
-            // Atualiza o manifesto de capítulos (chapters/manifest.json)
-            const manifestPath = path.join(chaptersDir, 'manifest.json');
-            const manifest = readJSONSafe(manifestPath, []);
+        // Atualiza o manifesto de capítulos (chapters/manifest.json)
+        const manifestPath = path.join(chaptersDir, 'manifest.json');
+        const manifest = readJSONSafe(manifestPath, []);
 
-            const existingIndex = manifest.findIndex(item => item.id === chapterId);
-            const entry = { id: chapterId, title: title || 'Capítulo', file: fileName, order: order || 0 };
+        const existingIndex = manifest.findIndex(item => item.id === chapterId);
+        const entry = { id: chapterId, title: title || 'Capítulo', file: fileName, order: order || 0 };
 
-            if (number != null) {
-                entry.number = number;
-            }
-
-            if (existingIndex >= 0) {
-                manifest[existingIndex] = entry;
-            } else {
-                manifest.push(entry);
-            }
-
-            manifest.sort((a, b) => a.order - b.order);
-
-            await writeJSON(manifestPath, manifest);
-
-            // Espelha o resumo no project.json, para consulta rápida
-            const projectJsonPath = path.join(projectPath, 'project.json');
-            const projectData = readJSONSafe(projectJsonPath, {});
-            projectData.chapters = manifest;
-
-            // Sumário (re)criado ou atualizado: limpa a marca de "excluído".
-            if (chapterId === TOC_CHAPTER_ID) {
-                delete projectData.tocDeleted;
-            }
-
-            await writeJSON(projectJsonPath, projectData);
-
-            return { success: true, file: fileName };
-
-        } catch (error) {
-            console.error('Erro ao salvar capítulo:', error);
-            return { success: false, error: error.message };
+        if (existingIndex >= 0) {
+            manifest[existingIndex] = entry;
+        } else {
+            manifest.push(entry);
         }
-    });
+
+        manifest.sort((a, b) => a.order - b.order);
+
+        await writeJSON(manifestPath, manifest);
+
+        // Espelha o resumo no project.json, para consulta rápida
+        const projectJsonPath = path.join(projectPath, 'project.json');
+        const projectData = readJSONSafe(projectJsonPath, {});
+        projectData.chapters = manifest;
+        await writeJSON(projectJsonPath, projectData);
+
+        return { success: true, file: fileName };
+
+    } catch (error) {
+        console.error('Erro ao salvar capítulo:', error);
+        return { success: false, error: error.message };
+    }
 });
 
 
 // Remove o .xhtml do capítulo e atualiza os manifestos
-ipcMain.handle('excluir-capitulo', (event, dados) => {
-    const { projectPath, chapterId } = dados;
-
-    if (!projectPath) {
-        return Promise.resolve({ success: false, error: 'Nenhum projeto aberto.' });
-    }
-
-    return enqueueChapterManifestWrite(projectPath, async () => {
-        try {
-            const chaptersDir = path.join(projectPath, 'chapters');
-            const manifestPath = path.join(chaptersDir, 'manifest.json');
-            const manifest = readJSONSafe(manifestPath, []);
-
-            const entry = manifest.find(item => item.id === chapterId);
-
-            if (entry) {
-                const filePath = path.join(chaptersDir, entry.file);
-                if (fsSync.existsSync(filePath)) {
-                    await fs.unlink(filePath);
-                }
-            }
-
-            const updatedManifest = manifest.filter(item => item.id !== chapterId);
-            await writeJSON(manifestPath, updatedManifest);
-
-            const projectJsonPath = path.join(projectPath, 'project.json');
-            const projectData = readJSONSafe(projectJsonPath, {});
-            projectData.chapters = updatedManifest;
-
-            // Excluir o sumário marca o projeto para que ele não seja
-            // recriado sozinho na próxima abertura (só via Ctrl + L).
-            if (chapterId === TOC_CHAPTER_ID) {
-                projectData.tocDeleted = true;
-            }
-
-            await writeJSON(projectJsonPath, projectData);
-
-            return { success: true };
-
-        } catch (error) {
-            console.error('Erro ao excluir capítulo:', error);
-            return { success: false, error: error.message };
+ipcMain.handle('excluir-capitulo', async (event, { projectPath, chapterId }) => {
+    try {
+        if (!projectPath) {
+            throw new Error('Nenhum projeto aberto.');
         }
-    });
+
+        const chaptersDir = path.join(projectPath, 'chapters');
+        const manifestPath = path.join(chaptersDir, 'manifest.json');
+        const manifest = readJSONSafe(manifestPath, []);
+
+        const entry = manifest.find(item => item.id === chapterId);
+
+        if (entry) {
+            const filePath = path.join(chaptersDir, entry.file);
+            if (fsSync.existsSync(filePath)) {
+                await fs.unlink(filePath);
+            }
+        }
+
+        const updatedManifest = manifest.filter(item => item.id !== chapterId);
+        await writeJSON(manifestPath, updatedManifest);
+
+        const projectJsonPath = path.join(projectPath, 'project.json');
+        const projectData = readJSONSafe(projectJsonPath, {});
+        projectData.chapters = updatedManifest;
+        await writeJSON(projectJsonPath, projectData);
+
+        return { success: true };
+
+    } catch (error) {
+        console.error('Erro ao excluir capítulo:', error);
+        return { success: false, error: error.message };
+    }
 });
 
 
@@ -775,8 +702,7 @@ ipcMain.handle('listar-projetos', async () => {
                 author: data.author || '',
                 language: data.language || 'pt-BR',
                 description: data.description || '',
-                cover: coverUrl,
-                appVersion: data.appVersion || ''
+                cover: coverUrl
             });
         }
 
@@ -836,8 +762,7 @@ ipcMain.handle('carregar-projeto', async (event, projectPath) => {
             chapters.push({
                 id: entry.id,
                 title: entry.title,
-                html,
-                number: entry.number
+                html
             });
         }
 
